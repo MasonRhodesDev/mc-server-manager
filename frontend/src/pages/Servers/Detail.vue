@@ -16,15 +16,28 @@
 
       <!-- Control buttons -->
       <div class="flex items-center gap-2 shrink-0">
-        <button v-if="liveStatus === 'running'" @click="doStop" class="btn-secondary">
+        <!-- Not yet deployed on this host -->
+        <button v-if="liveStatus === 'not deployed'" @click="doDeploy" :disabled="acting" class="btn-primary">
+          <Loader2 v-if="acting" class="w-4 h-4 animate-spin" />
+          <Rocket v-else class="w-4 h-4" />
+          Deploy
+        </button>
+        <!-- Deployed but stopped -->
+        <template v-else-if="liveStatus !== 'running' && liveStatus !== 'starting'">
+          <button @click="doStart" :disabled="acting" class="btn-primary">
+            <Play class="w-4 h-4" />
+            Start
+          </button>
+          <button @click="doDeploy" :disabled="acting" class="btn-ghost text-xs px-2.5 py-1.5" title="Redeploy containers">
+            <Rocket class="w-3.5 h-3.5" />
+          </button>
+        </template>
+        <!-- Running -->
+        <button v-else @click="doStop" :disabled="acting" class="btn-secondary">
           <Square class="w-4 h-4 text-red-400" />
           Stop
         </button>
-        <button v-else @click="doStart" class="btn-primary">
-          <Play class="w-4 h-4" />
-          Start
-        </button>
-        <button @click="doBackup" class="btn-secondary">
+        <button @click="doBackup" :disabled="acting" class="btn-secondary">
           <Database class="w-4 h-4" />
           Backup
         </button>
@@ -115,7 +128,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { useRoute, RouterLink } from "vue-router";
-import { ChevronLeft, Square, Play, Database, RefreshCw, Plus, Undo2, Trash2, Loader2 } from "lucide-vue-next";
+import { ChevronLeft, Square, Play, Database, RefreshCw, Plus, Undo2, Trash2, Loader2, Rocket } from "lucide-vue-next";
 import { format } from "date-fns";
 import StatusBadge from "../../components/StatusBadge.vue";
 import { servers as serversApi, backups as backupsApi } from "../../api/endpoints.js";
@@ -125,10 +138,11 @@ const route = useRoute();
 const ui = useUIStore();
 
 const server = ref<any>(null);
-const liveStatus = ref("stopped");
+const liveStatus = ref("not deployed");
 const logs = ref<string[]>([]);
 const logsLoading = ref(false);
 const serverBackups = ref<any[]>([]);
+const acting = ref(false); // prevents double-clicks during async ops
 
 onMounted(async () => {
   const id = route.params.id as string;
@@ -154,16 +168,58 @@ async function fetchLogs() {
   }
 }
 
+async function doDeploy() {
+  acting.value = true;
+  try {
+    await serversApi.deploy(server.value.id);
+    liveStatus.value = "starting";
+    ui.notify("success", "Deploying — pulling images and creating containers...");
+    // Poll status until containers appear
+    pollStatus();
+  } catch (e: any) {
+    ui.notify("error", e.response?.data?.error ?? "Deploy failed");
+  } finally {
+    acting.value = false;
+  }
+}
+
 async function doStart() {
-  await serversApi.start(server.value.id);
-  liveStatus.value = "starting";
-  ui.notify("success", "Server starting...");
+  acting.value = true;
+  try {
+    await serversApi.start(server.value.id);
+    liveStatus.value = "starting";
+    ui.notify("success", "Server starting...");
+  } catch (e: any) {
+    ui.notify("error", e.response?.data?.error ?? "Failed to start");
+  } finally {
+    acting.value = false;
+  }
 }
 
 async function doStop() {
-  await serversApi.stop(server.value.id);
-  liveStatus.value = "stopped";
-  ui.notify("info", "Server stopped");
+  acting.value = true;
+  try {
+    await serversApi.stop(server.value.id);
+    liveStatus.value = "stopped";
+    ui.notify("info", "Server stopped");
+  } catch (e: any) {
+    ui.notify("error", e.response?.data?.error ?? "Failed to stop");
+  } finally {
+    acting.value = false;
+  }
+}
+
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
+async function pollStatus() {
+  if (pollTimer) clearTimeout(pollTimer);
+  try {
+    const data = await serversApi.status(server.value.id);
+    liveStatus.value = data.containers.game ?? "not deployed";
+  } catch { /* ignore */ }
+  // Keep polling while transitioning
+  if (liveStatus.value === "starting" || liveStatus.value === "not deployed") {
+    pollTimer = setTimeout(pollStatus, 5000);
+  }
 }
 
 async function doBackup() {

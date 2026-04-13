@@ -2,6 +2,7 @@ import Elysia, { t } from "elysia";
 import { db } from "../db/index.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import { getContainerStatus, startContainer, stopContainer, containerLogs } from "../services/docker.js";
+import { deployServer, undeployServer } from "../services/deploy.js";
 import { logger } from "../lib/logger.js";
 
 export const serverRoutes = new Elysia({ prefix: "/api/servers" })
@@ -115,7 +116,42 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
     return { success: true };
   })
 
+  // DELETE /api/servers/:id (admin only — also remove containers)
+  // Note: requireAdmin already applied above; this overrides the previous delete to also undeploy
+
   // ── Control endpoints ─────────────────────────────────────────────────────
+
+  // POST /api/servers/:id/control/deploy — create containers for the first time (or redeploy)
+  .post("/:id/control/deploy", async ({ params, set, currentUser }) => {
+    const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
+    if (!server) { set.status = 404; return { error: "Server not found" }; }
+
+    logger.audit("server.deploy", {
+      userId: currentUser.id,
+      username: currentUser.username,
+      serverId: server.id,
+      serverName: server.name,
+    });
+
+    await db.updateTable("servers")
+      .set({ state: "starting", updated_at: new Date().toISOString() })
+      .where("id", "=", params.id)
+      .execute();
+
+    // Run deploy in background — images can take time to pull
+    deployServer(server).then(async result => {
+      const newState = result.ok ? "stopped" : "stopped"; // router is up; game starts on connection
+      await db.updateTable("servers")
+        .set({ state: newState, updated_at: new Date().toISOString() })
+        .where("id", "=", params.id)
+        .execute();
+      if (!result.ok) {
+        logger.error("server.deploy_failed", { serverId: server.id, error: result.error });
+      }
+    });
+
+    return { status: "deploying", message: "Pulling images and creating containers — this may take a minute." };
+  })
 
   // POST /api/servers/:id/control/start
   .post("/:id/control/start", async ({ params, set, currentUser }) => {

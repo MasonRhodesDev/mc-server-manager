@@ -16,6 +16,7 @@ export const servers = {
   create: (data: Record<string, unknown>) => api.post("/servers", data).then(r => r.data),
   update: (id: string, data: Record<string, unknown>) => api.put(`/servers/${id}`, data).then(r => r.data),
   delete: (id: string) => api.delete(`/servers/${id}`).then(r => r.data),
+  deploy: (id: string) => api.post(`/servers/${id}/control/deploy`).then(r => r.data),
   start: (id: string) => api.post(`/servers/${id}/control/start`).then(r => r.data),
   stop: (id: string) => api.post(`/servers/${id}/control/stop`).then(r => r.data),
   restart: (id: string) => servers.stop(id).then(() => servers.start(id)),

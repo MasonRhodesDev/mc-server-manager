@@ -25,6 +25,7 @@
   .badge-starting { @apply inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 border border-yellow-500/30; }
   .badge-created  { @apply inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30; }
   .badge-error    { @apply inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30; }
+  .badge-ghost    { @apply inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-coal-800/50 text-coal-500 border border-coal-700/30; }
 
   /* Cards */
   .card { @apply bg-coal-900 border border-coal-800 rounded-xl p-5; }
