@@ -1,6 +1,7 @@
 import Elysia, { t } from "elysia";
 import { db } from "../db/index.js";
 import { jwtPlugin, requireAuth, type JWTPayload } from "../middleware/auth.js";
+import { logger } from "../lib/logger.js";
 
 // OAuth state map (in-memory; fine for single-instance)
 const oauthStates = new Map<string, { provider: string; createdAt: number }>();
@@ -82,6 +83,45 @@ async function exchangeCode(
 export const authRoutes = new Elysia({ prefix: "/api/auth" })
   .use(jwtPlugin)
 
+  // POST /api/auth/dev-login — development only, creates/returns a local test user
+  .post("/dev-login", async ({ jwt, set, body }) => {
+    if (process.env.NODE_ENV === "production") {
+      set.status = 404;
+      return { error: "Not found" };
+    }
+
+    const username = (body as any)?.username ?? "devuser";
+    const provider = "dev";
+    const providerId = `dev-${username}`;
+
+    let user = await db.selectFrom("users").selectAll()
+      .where("provider", "=", provider)
+      .where("provider_id", "=", providerId)
+      .executeTakeFirst();
+
+    if (!user) {
+      const userCount = await db.selectFrom("users").select(db.fn.count("id").as("count")).executeTakeFirst();
+      const isFirst = Number(userCount?.count ?? 0) === 0;
+      const id = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+      await db.insertInto("users").values({
+        id,
+        email: `${username}@localhost`,
+        username,
+        avatar_url: null,
+        role: isFirst ? "admin" : "viewer",
+        provider,
+        provider_id: providerId,
+      }).execute();
+      user = await db.selectFrom("users").selectAll().where("id", "=", id).executeTakeFirst();
+    }
+
+    if (!user) { set.status = 500; return { error: "Failed to create dev user" }; }
+
+    const token = await jwt.sign({ userId: user.id, role: user.role } satisfies JWTPayload);
+    logger.audit("auth.dev_login", { userId: user.id, username: user.username, role: user.role });
+    return { token, user: { id: user.id, email: user.email, username: user.username, avatarUrl: user.avatar_url, role: user.role } };
+  })
+
   // GET /api/auth/providers — list configured/enabled providers
   .get("/providers", async () => {
     const rows = await db.selectFrom("auth_providers").selectAll().execute();
@@ -150,6 +190,13 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     if (!user) { set.status = 500; return { error: "Failed to create user" }; }
 
     const token = await jwt.sign({ userId, role: user.role } satisfies JWTPayload);
+    logger.audit("auth.login", {
+      userId: user.id,
+      username: user.username,
+      provider,
+      role: user.role,
+      isNewUser: !existingUser,
+    });
     return { token, user: { id: user.id, email: user.email, username: user.username, avatarUrl: user.avatar_url, role: user.role } };
   }, { query: t.Object({ code: t.String(), state: t.String() }) })
 
@@ -160,4 +207,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
   }))
 
   // POST /api/auth/logout — client drops token; server records nothing (stateless JWT)
-  .post("/logout", () => ({ success: true }));
+  .post("/logout", ({ currentUser }) => {
+    logger.audit("auth.logout", { userId: currentUser.id, username: currentUser.username });
+    return { success: true };
+  });

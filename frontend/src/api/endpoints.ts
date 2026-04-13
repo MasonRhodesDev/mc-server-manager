@@ -6,6 +6,7 @@ export const auth = {
   login: (provider: string) => api.get(`/auth/login?provider=${provider}`).then(r => r.data),
   me: () => api.get("/auth/me").then(r => r.data),
   logout: () => api.post("/auth/logout"),
+  devLogin: (username = "devuser") => api.post("/auth/dev-login", { username }).then(r => r.data),
 };
 
 // ── Servers ───────────────────────────────────────────────────────────────────

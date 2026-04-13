@@ -22,6 +22,12 @@ export const useAuthStore = defineStore("auth", () => {
     localStorage.setItem("mc_token", t);
   }
 
+  function setAuth(t: string, u: User) {
+    token.value = t;
+    user.value = u;
+    localStorage.setItem("mc_token", t);
+  }
+
   function clearToken() {
     token.value = null;
     user.value = null;
@@ -38,5 +44,5 @@ export const useAuthStore = defineStore("auth", () => {
     clearToken();
   }
 
-  return { token, user, isAdmin, isOperator, setToken, clearToken, fetchMe, logout };
+  return { token, user, isAdmin, isOperator, setToken, setAuth, clearToken, fetchMe, logout };
 });

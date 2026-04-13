@@ -2,18 +2,20 @@ import Elysia, { t } from "elysia";
 import { db } from "../db/index.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import { getContainerStatus, startContainer, stopContainer, containerLogs } from "../services/docker.js";
+import { logger } from "../lib/logger.js";
 
 export const serverRoutes = new Elysia({ prefix: "/api/servers" })
   .use(requireAuth)
 
   // GET /api/servers
-  .get("/", async () => {
+  .get("/", async ({ currentUser }) => {
+    logger.info("servers.list", { userId: currentUser.id });
     const servers = await db.selectFrom("servers").selectAll().orderBy("created_at", "asc").execute();
     return { servers };
   })
 
   // POST /api/servers
-  .post("/", async ({ body, set }) => {
+  .post("/", async ({ body, set, currentUser }) => {
     const id = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
     await db.insertInto("servers").values({
       id,
@@ -32,6 +34,13 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
     }).execute();
 
     const server = await db.selectFrom("servers").selectAll().where("id", "=", id).executeTakeFirst();
+    logger.audit("server.create", {
+      userId: currentUser.id,
+      username: currentUser.username,
+      serverId: id,
+      serverName: body.name,
+      serverType: body.serverType ?? "FTBA",
+    });
     set.status = 201;
     return { server };
   }, {
@@ -58,8 +67,8 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
   })
 
   // PUT /api/servers/:id
-  .put("/:id", async ({ params, body, set }) => {
-    const existing = await db.selectFrom("servers").select("id").where("id", "=", params.id).executeTakeFirst();
+  .put("/:id", async ({ params, body, set, currentUser }) => {
+    const existing = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!existing) { set.status = 404; return { error: "Server not found" }; }
 
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -70,6 +79,15 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
     if (body.modpackVersionId !== undefined) updates.modpack_version_id = body.modpackVersionId;
 
     await db.updateTable("servers").set(updates as any).where("id", "=", params.id).execute();
+
+    logger.audit("server.update", {
+      userId: currentUser.id,
+      username: currentUser.username,
+      serverId: params.id,
+      serverName: existing.name,
+      changes: Object.keys(updates).filter(k => k !== "updated_at"),
+    });
+
     const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     return { server };
   }, {
@@ -84,31 +102,75 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
 
   // DELETE /api/servers/:id (admin only)
   .use(requireAdmin)
-  .delete("/:id", async ({ params, set }) => {
-    const server = await db.selectFrom("servers").select("id").where("id", "=", params.id).executeTakeFirst();
+  .delete("/:id", async ({ params, set, currentUser }) => {
+    const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!server) { set.status = 404; return { error: "Server not found" }; }
     await db.deleteFrom("servers").where("id", "=", params.id).execute();
+    logger.audit("server.delete", {
+      userId: currentUser.id,
+      username: currentUser.username,
+      serverId: params.id,
+      serverName: server.name,
+    });
     return { success: true };
   })
 
   // ── Control endpoints ─────────────────────────────────────────────────────
 
   // POST /api/servers/:id/control/start
-  .post("/:id/control/start", async ({ params, set }) => {
+  .post("/:id/control/start", async ({ params, set, currentUser }) => {
     const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!server) { set.status = 404; return { error: "Server not found" }; }
-    await startContainer(server.name);
-    await startContainer(`${server.name}-router`);
-    await db.updateTable("servers").set({ state: "starting", updated_at: new Date().toISOString() }).where("id", "=", params.id).execute();
+
+    logger.audit("server.start", {
+      userId: currentUser.id,
+      username: currentUser.username,
+      serverId: server.id,
+      serverName: server.name,
+    });
+
+    const [gameResult, routerResult] = await Promise.all([
+      startContainer(server.name),
+      startContainer(`${server.name}-router`),
+    ]);
+
+    if (!gameResult.ok || !routerResult.ok) {
+      set.status = 503;
+      return {
+        error: gameResult.error ?? routerResult.error ?? "Failed to start containers",
+        detail: { game: gameResult, router: routerResult },
+      };
+    }
+
+    await db.updateTable("servers")
+      .set({ state: "starting", updated_at: new Date().toISOString() })
+      .where("id", "=", params.id)
+      .execute();
     return { status: "starting" };
   })
 
   // POST /api/servers/:id/control/stop
-  .post("/:id/control/stop", async ({ params, set }) => {
+  .post("/:id/control/stop", async ({ params, set, currentUser }) => {
     const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!server) { set.status = 404; return { error: "Server not found" }; }
-    await stopContainer(server.name);
-    await db.updateTable("servers").set({ state: "stopped", updated_at: new Date().toISOString() }).where("id", "=", params.id).execute();
+
+    logger.audit("server.stop", {
+      userId: currentUser.id,
+      username: currentUser.username,
+      serverId: server.id,
+      serverName: server.name,
+    });
+
+    const result = await stopContainer(server.name);
+    if (!result.ok) {
+      set.status = 503;
+      return { error: result.error ?? "Failed to stop container" };
+    }
+
+    await db.updateTable("servers")
+      .set({ state: "stopped", updated_at: new Date().toISOString() })
+      .where("id", "=", params.id)
+      .execute();
     return { status: "stopped" };
   })
 

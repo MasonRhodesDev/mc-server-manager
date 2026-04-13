@@ -2,6 +2,7 @@ import Elysia, { t } from "elysia";
 import { db } from "../db/index.js";
 import { requireAuth } from "../middleware/auth.js";
 import { inspectContainer } from "../services/docker.js";
+import { logger } from "../lib/logger.js";
 import { join } from "path";
 import { $ } from "bun";
 
@@ -48,12 +49,21 @@ export const backupRoutes = new Elysia({ prefix: "/api/servers/:id/backups" })
   })
 
   // POST /api/servers/:id/backups/create
-  .post("/create", async ({ params, body, set }) => {
+  .post("/create", async ({ params, body, set, currentUser }) => {
     const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!server) { set.status = 404; return { error: "Server not found" }; }
 
     const label = body.label ?? (body.manual ? "Manual backup" : "Auto backup");
     const type = body.manual ? "manual" as const : "auto" as const;
+
+    logger.audit("backup.create", {
+      userId: currentUser.id,
+      username: currentUser.username,
+      serverId: server.id,
+      serverName: server.name,
+      label,
+      type,
+    });
 
     const filePath = await runBackup(server.name, label, type);
 
@@ -70,6 +80,7 @@ export const backupRoutes = new Elysia({ prefix: "/api/servers/:id/backups" })
       type,
     }).execute();
 
+    logger.info("backup.created", { backupId, serverId: server.id, filePath, sizeBytes: stat.size });
     const backup = await db.selectFrom("backups").selectAll().where("id", "=", backupId).executeTakeFirst();
     set.status = 201;
     return { backup };
@@ -81,7 +92,7 @@ export const backupRoutes = new Elysia({ prefix: "/api/servers/:id/backups" })
   })
 
   // POST /api/servers/:id/backups/:backupId/restore
-  .post("/:backupId/restore", async ({ params, set }) => {
+  .post("/:backupId/restore", async ({ params, set, currentUser }) => {
     const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!server) { set.status = 404; return { error: "Server not found" }; }
 
@@ -89,6 +100,16 @@ export const backupRoutes = new Elysia({ prefix: "/api/servers/:id/backups" })
     if (!backup) { set.status = 404; return { error: "Backup not found" }; }
 
     const dataDir = join(DATA_PATH, server.name, "data");
+
+    logger.audit("backup.restore", {
+      userId: currentUser.id,
+      username: currentUser.username,
+      serverId: server.id,
+      serverName: server.name,
+      backupId: backup.id,
+      backupLabel: backup.label,
+      filePath: backup.file_path,
+    });
 
     // Stop game server
     await $`docker stop ${server.name}`.nothrow();
@@ -100,13 +121,21 @@ export const backupRoutes = new Elysia({ prefix: "/api/servers/:id/backups" })
 
     await db.updateTable("servers").set({ state: "stopped", updated_at: new Date().toISOString() }).where("id", "=", params.id).execute();
 
+    logger.info("backup.restored", { serverId: server.id, backupId: backup.id });
     return { success: true, restoredFrom: backup.label, restoredAt: new Date().toISOString() };
   })
 
   // DELETE /api/servers/:id/backups/:backupId
-  .delete("/:backupId", async ({ params, set }) => {
+  .delete("/:backupId", async ({ params, set, currentUser }) => {
     const backup = await db.selectFrom("backups").selectAll().where("id", "=", params.backupId).executeTakeFirst();
     if (!backup) { set.status = 404; return { error: "Backup not found" }; }
+
+    logger.audit("backup.delete", {
+      userId: currentUser.id,
+      username: currentUser.username,
+      backupId: backup.id,
+      filePath: backup.file_path,
+    });
 
     await import("fs/promises").then(fs => fs.unlink(backup.file_path).catch(() => {}));
     await db.deleteFrom("backups").where("id", "=", params.backupId).execute();

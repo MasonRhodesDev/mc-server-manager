@@ -7,6 +7,7 @@ import { serverRoutes } from "./api/servers.js";
 import { backupRoutes } from "./api/backups.js";
 import { ftbRoutes } from "./api/ftb.js";
 import { settingsRoutes } from "./api/settings.js";
+import { logger } from "./lib/logger.js";
 
 const PORT = Number(process.env.PORT ?? 3001);
 
@@ -21,17 +22,47 @@ const app = new Elysia()
     },
   }))
 
-  // Health check
+  // ── Per-request logging ───────────────────────────────────────────────────
+  .derive(() => ({ _reqStart: Date.now() }))
+
+  .onAfterResponse(({ request, set, _reqStart }) => {
+    const ms = Date.now() - _reqStart;
+    const url = new URL(request.url);
+    if (url.pathname.startsWith("/swagger")) return; // skip swagger noise
+    logger.info("http", {
+      method: request.method,
+      path: url.pathname,
+      status: set.status ?? 200,
+      ms,
+      ip: request.headers.get("x-forwarded-for")
+        ?? request.headers.get("x-real-ip")
+        ?? "local",
+    });
+  })
+
+  .onError(({ request, error, set, _reqStart }) => {
+    const ms = Date.now() - (_reqStart ?? 0);
+    const url = new URL(request.url);
+    logger.error("http_error", {
+      method: request.method,
+      path: url.pathname,
+      status: set.status ?? 500,
+      ms,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  })
+
+  // ── Health check ─────────────────────────────────────────────────────────
   .get("/health", () => ({ status: "ok", ts: new Date().toISOString() }))
 
-  // API routes
+  // ── API routes ────────────────────────────────────────────────────────────
   .use(authRoutes)
   .use(serverRoutes)
   .use(backupRoutes)
   .use(ftbRoutes)
   .use(settingsRoutes)
 
-  // 404 catch-all
+  // ── 404 catch-all ────────────────────────────────────────────────────────
   .all("*", ({ set }) => {
     set.status = 404;
     return { error: "Not found" };
@@ -39,5 +70,8 @@ const app = new Elysia()
 
   .listen(PORT);
 
-console.log(`MC Server Manager backend running on http://0.0.0.0:${PORT}`);
-console.log(`  Swagger UI: http://localhost:${PORT}/swagger`);
+logger.info("startup", {
+  port: PORT,
+  swagger: `http://localhost:${PORT}/swagger`,
+  env: process.env.NODE_ENV ?? "development",
+});
