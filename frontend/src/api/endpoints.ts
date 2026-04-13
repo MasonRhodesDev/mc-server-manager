@@ -38,6 +38,8 @@ export const ftb = {
     api.get("/ftb/packs", { params }).then(r => r.data),
   pack: (packId: number) => api.get(`/ftb/packs/${packId}`).then(r => r.data),
   versions: (packId: number) => api.get(`/ftb/packs/${packId}/versions`).then(r => r.data),
+  versionDetail: (packId: number, versionId: number) =>
+    api.get(`/ftb/packs/${packId}/versions/${versionId}`).then(r => r.data),
 };
 
 // ── Settings ──────────────────────────────────────────────────────────────────

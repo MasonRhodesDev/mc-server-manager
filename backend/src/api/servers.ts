@@ -140,7 +140,7 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
 
     // Run deploy in background — images can take time to pull
     deployServer(server).then(async result => {
-      const newState = result.ok ? "stopped" : "stopped"; // router is up; game starts on connection
+      const newState = result.ok ? "stopped" : "error"; // stopped = ready; error = deploy failed
       await db.updateTable("servers")
         .set({ state: newState, updated_at: new Date().toISOString() })
         .where("id", "=", params.id)
@@ -157,6 +157,15 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
   .post("/:id/control/start", async ({ params, set, currentUser }) => {
     const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!server) { set.status = 404; return { error: "Server not found" }; }
+
+    if (server.state === "deploying") {
+      set.status = 409;
+      return { error: "Server is currently being deployed — wait for it to finish before starting." };
+    }
+    if (server.state === "error") {
+      set.status = 409;
+      return { error: "Server deploy failed — run /control/deploy again before trying to start." };
+    }
 
     logger.audit("server.start", {
       userId: currentUser.id,

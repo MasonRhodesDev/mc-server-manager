@@ -92,6 +92,22 @@ export async function getPackVersions(packId: number): Promise<any[]> {
   return pack?.versions ?? [];
 }
 
+// ── Version detail (full manifest with mod/file list) ─────────────────────────
+
+const VERSION_CACHE_PREFIX = 1_000_000; // cache version manifests at packId*1e6+versionId
+
+export async function getPackVersion(packId: number, versionId: number): Promise<any | null> {
+  const cacheId = VERSION_CACHE_PREFIX + versionId; // versionIds are unique globally
+  const cached = await cacheGet(cacheId);
+  if (cached) return cached;
+
+  const data = await fetchJson<any>(`${FTB_API}/modpack/${packId}/${versionId}`);
+  if (!data || data.status === "error") return null;
+
+  await cacheSet(cacheId, data);
+  return data;
+}
+
 // ── Pack list (paginated) ─────────────────────────────────────────────────────
 
 export async function getPackList(limit = 24, offset = 0): Promise<{

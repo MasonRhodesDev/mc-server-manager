@@ -1,5 +1,5 @@
 import Elysia, { t } from "elysia";
-import { getPackList, getPack, getPackVersions, searchPacks } from "../services/ftb-client.js";
+import { getPackList, getPack, getPackVersions, getPackVersion, searchPacks } from "../services/ftb-client.js";
 
 export const ftbRoutes = new Elysia({ prefix: "/api/ftb" })
 
@@ -33,4 +33,16 @@ export const ftbRoutes = new Elysia({ prefix: "/api/ftb" })
   .get("/packs/:packId/versions", async ({ params }) => {
     const versions = await getPackVersions(Number(params.packId));
     return { versions };
+  })
+
+  // GET /api/ftb/packs/:packId/versions/:versionId — full manifest with mod list
+  .get("/packs/:packId/versions/:versionId", async ({ params, set }) => {
+    try {
+      const version = await getPackVersion(Number(params.packId), Number(params.versionId));
+      if (!version) { set.status = 404; return { error: "Version not found" }; }
+      return { version };
+    } catch {
+      set.status = 404;
+      return { error: "Version not found" };
+    }
   });

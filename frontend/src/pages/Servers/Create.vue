@@ -110,6 +110,7 @@ const ui = useUIStore();
 // Pre-fill from FTB Explorer query params (?packId=103&packName=FTB+Skies)
 const packId = route.query.packId ? Number(route.query.packId) : null;
 const packName = route.query.packName ? String(route.query.packName) : "";
+const packVersionId = route.query.versionId ? Number(route.query.versionId) : null;
 
 function slugify(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -120,7 +121,7 @@ const form = ref({
   name: packName ? slugify(packName) : "",
   serverType: packId ? "FTBA" : "FTBA",
   modpackId: packId,
-  modpackVersionId: null as number | null,
+  modpackVersionId: packVersionId,
   memoryGb: 8,
   initMemoryGb: 2,
   rconPassword: "",
