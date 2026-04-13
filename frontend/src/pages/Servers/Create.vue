@@ -8,11 +8,18 @@
     </div>
 
     <div class="card space-y-5">
-      <h2 class="text-base font-semibold text-coal-100">Deploy New Server</h2>
+      <div class="flex items-start justify-between gap-3">
+        <h2 class="text-base font-semibold text-coal-100">Deploy New Server</h2>
+        <div v-if="packName" class="flex items-center gap-2 bg-green-900/20 border border-green-700/30 rounded-lg px-2.5 py-1 shrink-0">
+          <Layers class="w-3.5 h-3.5 text-green-400 shrink-0" />
+          <span class="text-xs text-green-300 truncate max-w-[160px]">{{ packName }}</span>
+        </div>
+      </div>
 
       <div>
         <label class="label">Server Name</label>
         <input v-model="form.name" class="input" placeholder="ftb-skies-2" />
+        <p class="text-xs text-coal-500 mt-1">Lowercase letters, numbers, hyphens only</p>
       </div>
 
       <div>
@@ -91,19 +98,28 @@
 
 <script setup lang="ts">
 import { ref } from "vue";
-import { useRouter, RouterLink } from "vue-router";
-import { Server, ChevronLeft, Loader2 } from "lucide-vue-next";
+import { useRouter, useRoute, RouterLink } from "vue-router";
+import { Server, ChevronLeft, Loader2, Layers } from "lucide-vue-next";
 import { servers as serversApi } from "../../api/endpoints.js";
 import { useUIStore } from "../../stores/ui.js";
 
 const router = useRouter();
+const route = useRoute();
 const ui = useUIStore();
+
+// Pre-fill from FTB Explorer query params (?packId=103&packName=FTB+Skies)
+const packId = route.query.packId ? Number(route.query.packId) : null;
+const packName = route.query.packName ? String(route.query.packName) : "";
+
+function slugify(name: string) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
 
 const submitting = ref(false);
 const form = ref({
-  name: "",
-  serverType: "FTBA",
-  modpackId: null as number | null,
+  name: packName ? slugify(packName) : "",
+  serverType: packId ? "FTBA" : "FTBA",
+  modpackId: packId,
   modpackVersionId: null as number | null,
   memoryGb: 8,
   initMemoryGb: 2,
