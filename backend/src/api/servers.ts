@@ -1,0 +1,130 @@
+import Elysia, { t } from "elysia";
+import { db } from "../db/index.js";
+import { requireAuth, requireAdmin } from "../middleware/auth.js";
+import { getContainerStatus, startContainer, stopContainer, containerLogs } from "../services/docker.js";
+
+export const serverRoutes = new Elysia({ prefix: "/api/servers" })
+  .use(requireAuth)
+
+  // GET /api/servers
+  .get("/", async () => {
+    const servers = await db.selectFrom("servers").selectAll().orderBy("created_at", "asc").execute();
+    return { servers };
+  })
+
+  // POST /api/servers
+  .post("/", async ({ body, set }) => {
+    const id = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+    await db.insertInto("servers").values({
+      id,
+      name: body.name,
+      server_type: body.serverType ?? "FTBA",
+      modpack_id: body.modpackId ?? null,
+      modpack_version_id: body.modpackVersionId ?? null,
+      memory_gb: body.memoryGb ?? 8,
+      init_memory_gb: body.initMemoryGb ?? 2,
+      rcon_password: body.rconPassword,
+      auto_scale_down_after: body.autoScaleDownAfter ?? "10m",
+      server_hostname: body.serverHostname,
+      server_port: body.serverPort,
+      router_api_port: body.routerApiPort,
+      state: "stopped",
+    }).execute();
+
+    const server = await db.selectFrom("servers").selectAll().where("id", "=", id).executeTakeFirst();
+    set.status = 201;
+    return { server };
+  }, {
+    body: t.Object({
+      name: t.String({ minLength: 1 }),
+      serverType: t.Optional(t.String()),
+      modpackId: t.Optional(t.Nullable(t.Number())),
+      modpackVersionId: t.Optional(t.Nullable(t.Number())),
+      memoryGb: t.Optional(t.Number()),
+      initMemoryGb: t.Optional(t.Number()),
+      rconPassword: t.String({ minLength: 1 }),
+      autoScaleDownAfter: t.Optional(t.String()),
+      serverHostname: t.String({ minLength: 1 }),
+      serverPort: t.Number(),
+      routerApiPort: t.Number(),
+    }),
+  })
+
+  // GET /api/servers/:id
+  .get("/:id", async ({ params, set }) => {
+    const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
+    if (!server) { set.status = 404; return { error: "Server not found" }; }
+    return { server };
+  })
+
+  // PUT /api/servers/:id
+  .put("/:id", async ({ params, body, set }) => {
+    const existing = await db.selectFrom("servers").select("id").where("id", "=", params.id).executeTakeFirst();
+    if (!existing) { set.status = 404; return { error: "Server not found" }; }
+
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (body.memoryGb !== undefined) updates.memory_gb = body.memoryGb;
+    if (body.initMemoryGb !== undefined) updates.init_memory_gb = body.initMemoryGb;
+    if (body.rconPassword !== undefined) updates.rcon_password = body.rconPassword;
+    if (body.autoScaleDownAfter !== undefined) updates.auto_scale_down_after = body.autoScaleDownAfter;
+    if (body.modpackVersionId !== undefined) updates.modpack_version_id = body.modpackVersionId;
+
+    await db.updateTable("servers").set(updates as any).where("id", "=", params.id).execute();
+    const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
+    return { server };
+  }, {
+    body: t.Object({
+      memoryGb: t.Optional(t.Number()),
+      initMemoryGb: t.Optional(t.Number()),
+      rconPassword: t.Optional(t.String()),
+      autoScaleDownAfter: t.Optional(t.String()),
+      modpackVersionId: t.Optional(t.Nullable(t.Number())),
+    }),
+  })
+
+  // DELETE /api/servers/:id (admin only)
+  .use(requireAdmin)
+  .delete("/:id", async ({ params, set }) => {
+    const server = await db.selectFrom("servers").select("id").where("id", "=", params.id).executeTakeFirst();
+    if (!server) { set.status = 404; return { error: "Server not found" }; }
+    await db.deleteFrom("servers").where("id", "=", params.id).execute();
+    return { success: true };
+  })
+
+  // ── Control endpoints ─────────────────────────────────────────────────────
+
+  // POST /api/servers/:id/control/start
+  .post("/:id/control/start", async ({ params, set }) => {
+    const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
+    if (!server) { set.status = 404; return { error: "Server not found" }; }
+    await startContainer(server.name);
+    await startContainer(`${server.name}-router`);
+    await db.updateTable("servers").set({ state: "starting", updated_at: new Date().toISOString() }).where("id", "=", params.id).execute();
+    return { status: "starting" };
+  })
+
+  // POST /api/servers/:id/control/stop
+  .post("/:id/control/stop", async ({ params, set }) => {
+    const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
+    if (!server) { set.status = 404; return { error: "Server not found" }; }
+    await stopContainer(server.name);
+    await db.updateTable("servers").set({ state: "stopped", updated_at: new Date().toISOString() }).where("id", "=", params.id).execute();
+    return { status: "stopped" };
+  })
+
+  // GET /api/servers/:id/status
+  .get("/:id/status", async ({ params, set }) => {
+    const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
+    if (!server) { set.status = 404; return { error: "Server not found" }; }
+    const containers = await getContainerStatus(server.name);
+    return { serverId: params.id, containers };
+  })
+
+  // GET /api/servers/:id/logs?lines=100
+  .get("/:id/logs", async ({ params, query, set }) => {
+    const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
+    if (!server) { set.status = 404; return { error: "Server not found" }; }
+    const lines = Number(query.lines ?? 100);
+    const logs = await containerLogs(server.name, lines);
+    return { logs };
+  }, { query: t.Object({ lines: t.Optional(t.String()) }) });

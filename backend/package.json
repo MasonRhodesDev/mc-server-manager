@@ -1,0 +1,24 @@
+{
+  "name": "mc-server-manager-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --hot src/index.ts",
+    "start": "bun run src/index.ts",
+    "db:migrate": "bun run src/db/migrate.ts"
+  },
+  "dependencies": {
+    "@elysiajs/bearer": "^1.1.0",
+    "@elysiajs/cors": "^1.1.0",
+    "@elysiajs/jwt": "^1.1.0",
+    "@elysiajs/swagger": "^1.1.0",
+    "elysia": "^1.1.0",
+    "kysely": "^0.27.4",
+    "kysely-bun-sqlite": "^0.3.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

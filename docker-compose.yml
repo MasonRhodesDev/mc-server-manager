@@ -1,0 +1,28 @@
+## Local development — runs backend + frontend dev servers with hot reload
+## Usage: docker compose up  (or run directly: cd backend && bun dev)
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: mc-manager-dev
+    ports:
+      - "3001:3000"
+    environment:
+      PORT: "3000"
+      DB_PATH: /config/mc-manager.db
+      DATA_PATH: /mnt/user/appdata/minecraft
+      BACKUPS_PATH: /mnt/user/appdata/minecraft-backups
+      JWT_SECRET: dev-secret-change-in-prod
+      FRONTEND_URL: "http://localhost:5173"
+    volumes:
+      - mc-manager-config:/config
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # For Unraid: uncomment and adjust paths
+      # - /mnt/user/appdata/minecraft:/mnt/user/appdata/minecraft
+      # - /mnt/user/appdata/minecraft-backups:/mnt/user/appdata/minecraft-backups
+    restart: unless-stopped
+
+volumes:
+  mc-manager-config:

@@ -1,0 +1,32 @@
+## Production deployment on Unraid
+## Copy to Unraid: scp -r . root@192.168.1.7:/mnt/user/appdata/mc-server-manager/
+## Run: docker compose -f docker-compose.prod.yml up -d
+
+services:
+  mc-server-manager:
+    image: mc-server-manager:latest
+    container_name: mc-server-manager
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "127.0.0.1:3010:3000"          # Behind Nginx Proxy Manager
+    environment:
+      PORT: "3000"
+      DB_PATH: /config/mc-manager.db
+      DATA_PATH: /mnt/user/appdata/minecraft
+      BACKUPS_PATH: /mnt/user/appdata/minecraft-backups
+      JWT_SECRET: "${JWT_SECRET}"       # Required — set in .env
+      FRONTEND_URL: "${FRONTEND_URL}"   # e.g. https://mcm.immaduck.xyz
+    volumes:
+      - /mnt/user/appdata/mc-server-manager/config:/config
+      - /mnt/user/appdata/minecraft:/mnt/user/appdata/minecraft:ro
+      - /mnt/user/appdata/minecraft-backups:/mnt/user/appdata/minecraft-backups
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    networks:
+      - mc-proxy                        # Access Velocity and game containers
+
+networks:
+  mc-proxy:
+    external: true
