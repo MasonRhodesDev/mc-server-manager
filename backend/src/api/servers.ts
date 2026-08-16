@@ -20,23 +20,32 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
   .post("/", async ({ body, set, currentUser }) => {
     const id = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
     const now = new Date().toISOString();
-    await db.insertInto("servers").values({
-      id,
-      name: body.name,
-      server_type: body.serverType ?? "FTBA",
-      modpack_id: body.modpackId ?? null,
-      modpack_version_id: body.modpackVersionId ?? null,
-      memory_gb: body.memoryGb ?? 8,
-      init_memory_gb: body.initMemoryGb ?? 2,
-      rcon_password: body.rconPassword,
-      auto_scale_down_after: body.autoScaleDownAfter ?? "10m",
-      server_hostname: body.serverHostname,
-      server_port: body.serverPort,
-      router_api_port: body.routerApiPort,
-      state: "created",
-      created_at: now,
-      updated_at: now,
-    }).execute();
+    try {
+      await db.insertInto("servers").values({
+        id,
+        name: body.name,
+        server_type: body.serverType ?? "FTBA",
+        modpack_id: body.modpackId ?? null,
+        modpack_version_id: body.modpackVersionId ?? null,
+        memory_gb: body.memoryGb ?? 8,
+        init_memory_gb: body.initMemoryGb ?? 2,
+        rcon_password: body.rconPassword,
+        auto_scale_down_after: body.autoScaleDownAfter ?? "10m",
+        server_hostname: body.serverHostname,
+        server_port: body.serverPort,
+        router_api_port: body.routerApiPort,
+        state: "created",
+        created_at: now,
+        updated_at: now,
+      }).execute();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("UNIQUE constraint failed: servers.name")) {
+        set.status = 409;
+        return { error: `A server named '${body.name}' already exists` };
+      }
+      throw err;
+    }
 
     const server = await db.selectFrom("servers").selectAll().where("id", "=", id).executeTakeFirst();
     logger.audit("server.create", {

@@ -11,7 +11,11 @@ export const useUIStore = defineStore("ui", () => {
   }
 
   function notify(type: "success" | "error" | "info", message: string, durationMs = 4000) {
-    const id = crypto.randomUUID();
+    // randomUUID is secure-context only (HTTPS or localhost). LAN HTTP on :5173 has no crypto.randomUUID.
+    const id =
+      typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `n-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     notifications.value.push({ id, type, message });
     setTimeout(() => {
       notifications.value = notifications.value.filter(n => n.id !== id);
