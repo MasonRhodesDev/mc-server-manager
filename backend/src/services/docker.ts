@@ -45,6 +45,9 @@ export interface ContainerInspect {
 export interface DockerResult {
   ok: boolean;
   error?: string;
+  notFound?: boolean;      // true when the container itself doesn't exist (Docker 404)
+  networkMissing?: boolean; // true when start failed because a referenced network is gone
+  missingNetwork?: string;  // name of the missing network, if known
 }
 
 // ── Container operations ──────────────────────────────────────────────────────
@@ -69,8 +72,18 @@ export async function startContainer(name: string): Promise<DockerResult> {
     logger.info("docker.start", { container: name });
     const res = await dockerFetch(`/containers/${name}/start`, { method: "POST" });
     if (res.status === 404) {
+      // Docker uses 404 for both "container not found" AND "referenced network not found".
+      // Parse the body to tell them apart.
+      const body = await res.json().catch(() => ({} as any));
+      const msg: string = body?.message ?? "";
+      const netMatch = msg.match(/network (\S+) not found/);
+      if (netMatch) {
+        const missingNetwork = netMatch[1];
+        logger.warn("docker.network_missing_on_start", { container: name, network: missingNetwork });
+        return { ok: false, networkMissing: true, missingNetwork, error: msg };
+      }
       logger.warn("docker.container_not_found", { container: name, op: "start" });
-      return { ok: false, error: `Container '${name}' not found — has it been deployed?` };
+      return { ok: false, notFound: true, error: `Container '${name}' not found — has it been deployed?` };
     }
     // 204 = started, 304 = already running — both are fine
     if (res.status === 204 || res.status === 304) {
@@ -95,7 +108,7 @@ export async function stopContainer(name: string, timeoutSecs = 30): Promise<Doc
     );
     if (res.status === 404) {
       logger.warn("docker.container_not_found", { container: name, op: "stop" });
-      return { ok: false, error: `Container '${name}' not found` };
+      return { ok: false, notFound: true, error: `Container '${name}' not found` };
     }
     if (res.status === 204 || res.status === 304) {
       logger.info("docker.stopped", { container: name });
@@ -107,6 +120,18 @@ export async function stopContainer(name: string, timeoutSecs = 30): Promise<Doc
   } catch (err) {
     logger.error("docker.unavailable", { op: "stop", container: name, error: String(err) });
     return { ok: false, error: "Docker socket unavailable — is Docker running?" };
+  }
+}
+
+export async function disconnectNetwork(networkName: string, containerName: string): Promise<void> {
+  try {
+    await dockerFetch(`/networks/${networkName}/disconnect`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ Container: containerName, Force: true }),
+    });
+  } catch {
+    // best-effort; ignore errors
   }
 }
 

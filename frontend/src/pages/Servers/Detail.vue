@@ -17,19 +17,20 @@
       <!-- Control buttons -->
       <div class="flex items-center gap-2 shrink-0">
         <!-- Not yet deployed on this host -->
-        <button v-if="liveStatus === 'not deployed'" @click="doDeploy" :disabled="acting" class="btn-primary">
-          <Loader2 v-if="acting" class="w-4 h-4 animate-spin" />
+        <button v-if="liveStatus === 'not deployed'" @click="doDeploy" :disabled="acting || !!activeTask" class="btn-primary">
+          <Loader2 v-if="acting || activeTask?.kind === 'deploy'" class="w-4 h-4 animate-spin" />
           <Rocket v-else class="w-4 h-4" />
           Deploy
         </button>
-        <!-- Deployed but stopped -->
+        <!-- Deployed but stopped/created -->
         <template v-else-if="liveStatus !== 'running' && liveStatus !== 'starting'">
-          <button @click="doStart" :disabled="acting" class="btn-primary">
+          <button @click="doStart" :disabled="acting || !!activeTask" class="btn-primary">
             <Play class="w-4 h-4" />
             Start
           </button>
-          <button @click="doDeploy" :disabled="acting" class="btn-ghost text-xs px-2.5 py-1.5" title="Redeploy containers">
-            <Rocket class="w-3.5 h-3.5" />
+          <button @click="doDeploy" :disabled="acting || !!activeTask" class="btn-ghost text-xs px-2.5 py-1.5" title="Redeploy containers">
+            <Loader2 v-if="activeTask?.kind === 'deploy'" class="w-3.5 h-3.5 animate-spin" />
+            <Rocket v-else class="w-3.5 h-3.5" />
           </button>
         </template>
         <!-- Running -->
@@ -37,12 +38,15 @@
           <Square class="w-4 h-4 text-red-400" />
           Stop
         </button>
-        <button @click="doBackup" :disabled="acting" class="btn-secondary">
+        <button @click="doBackup" :disabled="acting || !!activeTask" class="btn-secondary">
           <Database class="w-4 h-4" />
           Backup
         </button>
       </div>
     </div>
+
+    <!-- Task progress bar (deploy / backup / restore) -->
+    <TaskProgress :task="activeTask" />
 
     <!-- Info cards -->
     <div class="grid sm:grid-cols-3 gap-4">
@@ -82,7 +86,7 @@
     <div class="card">
       <div class="flex items-center justify-between mb-3">
         <h3 class="text-sm font-semibold text-coal-200">Backups</h3>
-        <button @click="doBackup" class="btn-secondary text-xs px-3 py-1.5">
+        <button @click="doBackup" :disabled="!!activeTask" class="btn-secondary text-xs px-3 py-1.5">
           <Plus class="w-3.5 h-3.5" />
           Create
         </button>
@@ -107,7 +111,7 @@
             </p>
           </div>
           <div class="flex items-center gap-2 shrink-0">
-            <button @click="doRestore(backup.id)" class="btn-ghost text-xs px-2 py-1 text-yellow-400 hover:text-yellow-300">
+            <button @click="doRestore(backup.id)" :disabled="!!activeTask" class="btn-ghost text-xs px-2 py-1 text-yellow-400 hover:text-yellow-300">
               <Undo2 class="w-3.5 h-3.5" />
               Restore
             </button>
@@ -126,35 +130,54 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useRoute, RouterLink } from "vue-router";
-import { ChevronLeft, Square, Play, Database, RefreshCw, Plus, Undo2, Trash2, Loader2, Rocket } from "lucide-vue-next";
+import {
+  ChevronLeft, Square, Play, Database, RefreshCw,
+  Plus, Undo2, Trash2, Loader2, Rocket,
+} from "lucide-vue-next";
 import { format } from "date-fns";
 import StatusBadge from "../../components/StatusBadge.vue";
+import TaskProgress from "../../components/TaskProgress.vue";
 import { servers as serversApi, backups as backupsApi } from "../../api/endpoints.js";
+import { connectTaskStream } from "../../api/sse.js";
 import { useUIStore } from "../../stores/ui.js";
+import { useTaskStore } from "../../stores/tasks.js";
 
-const route = useRoute();
-const ui = useUIStore();
+const route     = useRoute();
+const ui        = useUIStore();
+const taskStore = useTaskStore();
 
-const server = ref<any>(null);
-const liveStatus = ref("not deployed");
-const logs = ref<string[]>([]);
-const logsLoading = ref(false);
+const server        = ref<any>(null);
+const liveStatus    = ref("not deployed");
+const logs          = ref<string[]>([]);
+const logsLoading   = ref(false);
 const serverBackups = ref<any[]>([]);
-const acting = ref(false); // prevents double-clicks during async ops
+const acting        = ref(false);
+
+// Active task for this server (reactive computed from store)
+const activeTask = computed(() => server.value ? taskStore.forServer(server.value.id) : undefined);
+
+// Track SSE disconnect functions so we can clean up on unmount
+const disconnects = ref<Array<() => void>>([]);
 
 onMounted(async () => {
   const id = route.params.id as string;
   const [serverData, statusData, backupData] = await Promise.all([
-    serversApi.get(id).then(d => d.server),
-    serversApi.status(id).then(d => d.containers.game ?? "stopped"),
-    backupsApi.list(id).then(d => d.backups),
+    serversApi.get(id).then((d: any) => d.server),
+    serversApi.status(id).then((d: any) => d.containers.game ?? "stopped"),
+    backupsApi.list(id).then((d: any) => d.backups),
   ]);
   server.value = serverData;
   liveStatus.value = statusData;
   serverBackups.value = backupData;
   fetchLogs();
+});
+
+onUnmounted(() => {
+  // Close any open SSE streams when navigating away
+  disconnects.value.forEach(d => d());
+  disconnects.value = [];
 });
 
 async function fetchLogs() {
@@ -168,14 +191,20 @@ async function fetchLogs() {
   }
 }
 
+// ── Deploy ─────────────────────────────────────────────────────────────────────
+
 async function doDeploy() {
   acting.value = true;
   try {
-    await serversApi.deploy(server.value.id);
+    const { taskId } = await serversApi.deploy(server.value.id);
     liveStatus.value = "starting";
-    ui.notify("success", "Deploying — pulling images and creating containers...");
-    // Poll status until containers appear
-    pollStatus();
+    taskStore.track(taskId, "deploy", server.value.id);
+    subscribeTask(taskId, {
+      onDeployDone: () => {
+        liveStatus.value = "stopped";
+        ui.notify("success", "Deploy complete — server ready to start");
+      },
+    });
   } catch (e: any) {
     ui.notify("error", e.response?.data?.error ?? "Deploy failed");
   } finally {
@@ -183,12 +212,14 @@ async function doDeploy() {
   }
 }
 
+// ── Start / Stop ───────────────────────────────────────────────────────────────
+
 async function doStart() {
   acting.value = true;
   try {
     await serversApi.start(server.value.id);
     liveStatus.value = "starting";
-    ui.notify("success", "Server starting...");
+    ui.notify("success", "Server starting…");
   } catch (e: any) {
     ui.notify("error", e.response?.data?.error ?? "Failed to start");
   } finally {
@@ -209,41 +240,42 @@ async function doStop() {
   }
 }
 
-let pollTimer: ReturnType<typeof setTimeout> | null = null;
-async function pollStatus() {
-  if (pollTimer) clearTimeout(pollTimer);
-  try {
-    const data = await serversApi.status(server.value.id);
-    liveStatus.value = data.containers.game ?? "not deployed";
-  } catch { /* ignore */ }
-  // Keep polling while transitioning
-  if (liveStatus.value === "starting" || liveStatus.value === "not deployed") {
-    pollTimer = setTimeout(pollStatus, 5000);
-  }
-}
+// ── Backup ─────────────────────────────────────────────────────────────────────
 
 async function doBackup() {
-  ui.notify("info", "Creating backup...");
   try {
-    const data = await backupsApi.create(server.value.id, "Manual backup");
-    serverBackups.value.unshift(data.backup);
-    ui.notify("success", "Backup created");
+    const { taskId } = await backupsApi.create(server.value.id, "Manual backup");
+    taskStore.track(taskId, "backup", server.value.id);
+    subscribeTask(taskId, {
+      onBackupDone: (result: any) => {
+        if (result) serverBackups.value.unshift(result);
+        ui.notify("success", "Backup created");
+      },
+    });
   } catch {
     ui.notify("error", "Backup failed");
   }
 }
 
+// ── Restore ────────────────────────────────────────────────────────────────────
+
 async function doRestore(backupId: string) {
   if (!confirm("This will replace all server data. Continue?")) return;
-  ui.notify("info", "Restoring backup...");
   try {
-    await backupsApi.restore(server.value.id, backupId);
-    ui.notify("success", "Restore complete — server restarting");
-    liveStatus.value = "starting";
+    const { taskId } = await backupsApi.restore(server.value.id, backupId);
+    liveStatus.value = "stopped";
+    taskStore.track(taskId, "restore", server.value.id);
+    subscribeTask(taskId, {
+      onRestoreDone: () => {
+        ui.notify("success", "Restore complete");
+      },
+    });
   } catch {
     ui.notify("error", "Restore failed");
   }
 }
+
+// ── Delete backup ──────────────────────────────────────────────────────────────
 
 async function doDeleteBackup(backupId: string) {
   if (!confirm("Delete this backup?")) return;
@@ -252,14 +284,51 @@ async function doDeleteBackup(backupId: string) {
   ui.notify("info", "Backup deleted");
 }
 
+// ── SSE helper ─────────────────────────────────────────────────────────────────
+
+interface SubscribeOptions {
+  onDeployDone?:  () => void;
+  onBackupDone?:  (result: unknown) => void;
+  onRestoreDone?: () => void;
+}
+
+function subscribeTask(taskId: string, opts: SubscribeOptions) {
+  const disconnect = connectTaskStream(taskId, {
+    onStepDone: p => {
+      taskStore.update(taskId, {
+        status: "running",
+        progressPct: p.progressPct ?? 0,
+        currentStep: p.step ?? null,
+        message: p.message ?? null,
+      });
+    },
+    onSucceeded: p => {
+      taskStore.remove(taskId);
+      opts.onDeployDone?.();
+      opts.onBackupDone?.(p.result ?? null);
+      opts.onRestoreDone?.();
+    },
+    onFailed: p => {
+      taskStore.remove(taskId);
+      ui.notify("error", p.error ?? "Operation failed");
+    },
+    onCancelled: () => {
+      taskStore.remove(taskId);
+    },
+  });
+  disconnects.value.push(disconnect);
+}
+
+// ── Formatters ─────────────────────────────────────────────────────────────────
+
 function formatDate(iso: string) {
   return format(new Date(iso), "MMM d, HH:mm");
 }
 
 function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes}B`;
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)}KB`;
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)}MB`;
+  if (bytes < 1024)        return `${bytes}B`;
+  if (bytes < 1024 ** 2)   return `${(bytes / 1024).toFixed(1)}KB`;
+  if (bytes < 1024 ** 3)   return `${(bytes / 1024 ** 2).toFixed(1)}MB`;
   return `${(bytes / 1024 ** 3).toFixed(2)}GB`;
 }
 </script>

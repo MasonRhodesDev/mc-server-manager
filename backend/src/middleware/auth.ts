@@ -50,9 +50,39 @@ export const requireAuth = new Elysia({ name: "require-auth" })
 export const requireAdmin = new Elysia({ name: "require-admin" })
   .use(requireAuth)
   .derive({ as: "scoped" }, ({ currentUser, set }) => {
-    if (currentUser.role !== "admin") {
+    if (currentUser!.role !== "admin") {
       set.status = 403;
       throw new Error("Forbidden: admin role required");
     }
     return {};
+  });
+
+// SSE auth — reads token from ?token= query param because EventSource can't set headers
+export const requireAuthSSE = new Elysia({ name: "require-auth-sse" })
+  .use(jwtPlugin)
+  .derive({ as: "scoped" }, async ({ jwt, query, set }) => {
+    const token = (query as Record<string, string | undefined>).token;
+    if (!token) {
+      set.status = 401;
+      throw new Error("Unauthorized");
+    }
+
+    const payload = await jwt.verify(token) as JWTPayload | false;
+    if (!payload) {
+      set.status = 401;
+      throw new Error("Invalid or expired token");
+    }
+
+    const user = await db
+      .selectFrom("users")
+      .selectAll()
+      .where("id", "=", payload.userId)
+      .executeTakeFirst();
+
+    if (!user) {
+      set.status = 401;
+      throw new Error("User not found");
+    }
+
+    return { currentUser: user };
   });

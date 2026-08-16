@@ -111,6 +111,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
         role: isFirst ? "admin" : "viewer",
         provider,
         provider_id: providerId,
+        created_at: new Date().toISOString(),
       }).execute();
       user = await db.selectFrom("users").selectAll().where("id", "=", id).executeTakeFirst();
     }
@@ -183,6 +184,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
         role: isFirst ? "admin" : "viewer",
         provider,
         provider_id: profile.id,
+        created_at: new Date().toISOString(),
       }).execute();
     }
 

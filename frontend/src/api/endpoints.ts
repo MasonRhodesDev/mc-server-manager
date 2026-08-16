@@ -42,6 +42,11 @@ export const ftb = {
     api.get(`/ftb/packs/${packId}/versions/${versionId}`).then(r => r.data),
 };
 
+// ── Tasks ─────────────────────────────────────────────────────────────────────
+export const tasks = {
+  get: (taskId: string) => api.get(`/tasks/${taskId}`).then(r => r.data),
+};
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 export const settings = {
   getAuth: () => api.get("/settings/auth").then(r => r.data),

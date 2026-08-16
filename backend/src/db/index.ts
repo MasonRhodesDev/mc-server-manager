@@ -32,6 +32,8 @@ import type {
   AuthProviderRow,
   FtbCacheRow,
   SessionRow,
+  TaskRow,
+  TaskEventRow,
 } from "../types/index.js";
 
 interface Database_Tables {
@@ -41,6 +43,8 @@ interface Database_Tables {
   auth_providers: AuthProviderRow;
   ftb_cache: FtbCacheRow;
   sessions: SessionRow;
+  tasks: TaskRow;
+  task_events: TaskEventRow;
 }
 
 export const db = new Kysely<Database_Tables>({

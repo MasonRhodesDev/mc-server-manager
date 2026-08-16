@@ -78,8 +78,36 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- ── Tasks ─────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS tasks (
+  id           TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
+  kind         TEXT NOT NULL CHECK (kind IN ('deploy', 'backup', 'restore')),
+  server_id    TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  status       TEXT NOT NULL DEFAULT 'queued'
+               CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
+  current_step TEXT,
+  progress_pct INTEGER NOT NULL DEFAULT 0,
+  message      TEXT,
+  error        TEXT,
+  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  started_at   DATETIME,
+  finished_at  DATETIME
+);
+
+-- ── Task events ───────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS task_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  event_type  TEXT NOT NULL,
+  payload     TEXT NOT NULL DEFAULT '{}',
+  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- ── Indexes ───────────────────────────────────────────────────────────────────
-CREATE INDEX IF NOT EXISTS idx_backups_server_id ON backups(server_id);
+CREATE INDEX IF NOT EXISTS idx_backups_server_id  ON backups(server_id);
 CREATE INDEX IF NOT EXISTS idx_backups_created_at ON backups(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id   ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires   ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_server_id    ON tasks(server_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status       ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_task_events_task   ON task_events(task_id);

@@ -62,6 +62,28 @@ export interface SessionRow {
   created_at: string;
 }
 
+export interface TaskRow {
+  id: string;
+  kind: 'deploy' | 'backup' | 'restore';
+  server_id: string;
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  current_step: string | null;
+  progress_pct: number;
+  message: string | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface TaskEventRow {
+  id: number;
+  task_id: string;
+  event_type: string;
+  payload: string; // JSON blob
+  created_at: string;
+}
+
 // ── API response types ────────────────────────────────────────────────────────
 
 export interface User {

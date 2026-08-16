@@ -1,12 +1,20 @@
-## Local development — runs backend + frontend dev servers with hot reload
-## Usage: docker compose up  (or run directly: cd backend && bun dev)
+## Local development — hot reload for backend (bun --hot) and frontend (Vite HMR)
+## Usage: make dev
 
 services:
+
+  redis:
+    image: redis:7-alpine
+    container_name: mc-manager-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+
   backend:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-    container_name: mc-manager-dev
+    image: oven/bun:1
+    container_name: mc-manager-backend
+    working_dir: /app
+    command: sh -c "bun install && bun run --hot src/index.ts"
     ports:
       - "3001:3000"
     environment:
@@ -16,13 +24,31 @@ services:
       BACKUPS_PATH: /mnt/user/appdata/minecraft-backups
       JWT_SECRET: dev-secret-change-in-prod
       FRONTEND_URL: "http://localhost:5173"
+      REDIS_URL: "redis://redis:6379"
     volumes:
-      - mc-manager-config:/config
+      - ./backend:/app           # source mount — edits trigger --hot reload
+      - /app/node_modules        # anonymous vol keeps container deps isolated
+      - ./data:/config           # local bind mount — DB accessible at ./data/mc-manager.db
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      # For Unraid: uncomment and adjust paths
-      # - /mnt/user/appdata/minecraft:/mnt/user/appdata/minecraft
-      # - /mnt/user/appdata/minecraft-backups:/mnt/user/appdata/minecraft-backups
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  frontend:
+    image: oven/bun:1
+    container_name: mc-manager-frontend
+    working_dir: /app
+    command: sh -c "bun install && bun run dev -- --host"
+    ports:
+      - "5173:5173"
+    environment:
+      BACKEND_URL: "http://backend:3000"   # proxied by Vite to the backend service
+    volumes:
+      - ./frontend:/app          # source mount — edits trigger Vite HMR
+      - /app/node_modules        # anonymous vol keeps container deps isolated
+    depends_on:
+      - backend
     restart: unless-stopped
 
 volumes:
-  mc-manager-config:
+  redis-data:

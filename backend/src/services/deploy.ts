@@ -13,6 +13,7 @@
 
 import { logger } from "../lib/logger.js";
 import type { ServerRow } from "../types/index.js";
+import type { TaskEmitter } from "./tasks.js";
 
 const DATA_PATH     = process.env.DATA_PATH     ?? "/mnt/user/appdata/minecraft";
 const BACKUPS_PATH  = process.env.BACKUPS_PATH  ?? "/mnt/user/appdata/minecraft-backups";
@@ -55,10 +56,18 @@ async function networkCreate(name: string): Promise<void> {
   }
 }
 
+async function networkExists(name: string): Promise<boolean> {
+  const r = await dockerApi("GET", `/networks/${name}`);
+  return r.status === 200;
+}
+
 async function networkConnect(network: string, container: string): Promise<void> {
+  if (!await networkExists(network)) {
+    logger.info("deploy.proxy_network_absent", { network, container });
+    return; // skip silently — proxy network not required in dev
+  }
   const r = await dockerApi("POST", `/networks/${network}/connect`, { Container: container });
   if (r.status !== 200 && r.status !== 204) {
-    // Log but don't throw — proxy network may not exist in local dev
     logger.warn("deploy.network_connect_failed", { network, container, status: r.status, data: r.data });
   }
 }
@@ -85,7 +94,7 @@ async function containerStart(nameOrId: string): Promise<void> {
 async function pullImage(image: string): Promise<void> {
   // POST /images/create streams NDJSON progress lines (not a single JSON body).
   // Reading the full text body is what blocks until the pull finishes.
-  const [repo, tag = "latest"] = image.split(":");
+  const [repo = "", tag = "latest"] = image.split(":");
   const url = "http://localhost" + `/images/create?fromImage=${encodeURIComponent(repo)}&tag=${encodeURIComponent(tag)}`;
   const init: RequestInit = { method: "POST" };
   if (DOCKER_SOCKET.startsWith("unix://")) {
@@ -101,7 +110,10 @@ async function pullImage(image: string): Promise<void> {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-export async function deployServer(server: ServerRow): Promise<{ ok: boolean; error?: string }> {
+export async function deployServer(
+  server: ServerRow,
+  emit: TaskEmitter,
+): Promise<{ ok: boolean; error?: string }> {
   const { name } = server;
   const network  = `mc-${name}`;
   const dataDir  = `${DATA_PATH}/${name}/data`;
@@ -111,27 +123,40 @@ export async function deployServer(server: ServerRow): Promise<{ ok: boolean; er
     logger.audit("deploy.start", { serverName: name, serverType: server.server_type });
 
     // ── 1. Ensure data dirs exist ─────────────────────────────────────────────
-    // Docker won't create host paths automatically; we need them to exist before bind-mounting.
+    await emit("step.started", { step: "mkdirs", message: "Creating data directories…" });
     Bun.spawnSync(["mkdir", "-p", dataDir, bkDir]);
+    await emit("step.completed", { step: "mkdirs", progressPct: 5, message: "Data directories ready" });
 
     // ── 2. Pull images (sequential — parallel pulls thrash bandwidth) ─────────
-    for (const img of ["itzg/mc-router:latest", "itzg/minecraft-server:java21", "itzg/mc-backup:latest"]) {
+    const images: Array<{ img: string; step: string; label: string; pct: number }> = [
+      { img: "itzg/mc-router:latest",        step: "pull_router", label: "mc-router",        pct: 20 },
+      { img: "itzg/minecraft-server:java25", step: "pull_game",   label: "minecraft-server", pct: 45 },
+      { img: "itzg/mc-backup:latest",        step: "pull_backup", label: "mc-backup",        pct: 60 },
+    ];
+    for (const { img, step, label, pct } of images) {
+      await emit("step.started", { step, message: `Pulling ${label}…` });
       await pullImage(img).catch(err => {
         logger.warn("deploy.pull_warning", { image: img, error: String(err) });
       });
+      await emit("step.completed", { step, progressPct: pct, message: `Pulled ${label}` });
     }
 
     // ── 3. Per-server bridge network ──────────────────────────────────────────
+    await emit("step.started", { step: "create_network", message: `Creating network mc-${name}…` });
     await networkCreate(network);
+    await emit("step.completed", { step: "create_network", progressPct: 65, message: "Network ready" });
 
     // ── 4. Remove stale containers (idempotent) ───────────────────────────────
+    await emit("step.started", { step: "remove_stale", message: "Removing stale containers…" });
     await Promise.all([
       containerRemove(name),
       containerRemove(`${name}-router`),
       containerRemove(`${name}-backup`),
     ]);
+    await emit("step.completed", { step: "remove_stale", progressPct: 70, message: "Stale containers removed" });
 
     // ── 5. mc-router (start immediately) ─────────────────────────────────────
+    await emit("step.started", { step: "create_router", message: "Creating router container…" });
     const routerEnv: string[] = [
       "IN_DOCKER=true",
       "AUTO_SCALE_UP=true",
@@ -153,10 +178,15 @@ export async function deployServer(server: ServerRow): Promise<{ ok: boolean; er
         NetworkMode: network,
       },
     });
+    await emit("step.completed", { step: "create_router", progressPct: 78, message: "Router container created" });
+
+    await emit("step.started", { step: "start_router", message: "Starting router…" });
     await containerStart(`${name}-router`);
     logger.info("deploy.router_started", { serverName: name });
+    await emit("step.completed", { step: "start_router", progressPct: 83, message: "Router started" });
 
     // ── 6. Game server (create only — mc-router starts it on first connection) ─
+    await emit("step.started", { step: "create_game", message: "Creating game server container…" });
     const gameEnv: string[] = [
       "EULA=TRUE",
       `TYPE=${server.server_type}`,
@@ -180,7 +210,7 @@ export async function deployServer(server: ServerRow): Promise<{ ok: boolean; er
     }
 
     await containerCreate(name, {
-      Image: "itzg/minecraft-server:java21",
+      Image: "itzg/minecraft-server:java25",
       Env: gameEnv,
       Labels: { "mc-router.host": server.server_hostname },
       Volumes: { "/data": {} },
@@ -191,11 +221,15 @@ export async function deployServer(server: ServerRow): Promise<{ ok: boolean; er
       },
     });
     logger.info("deploy.game_created", { serverName: name });
+    await emit("step.completed", { step: "create_game", progressPct: 90, message: "Game server container created" });
 
     // Connect game to shared proxy network (optional — absent in local dev)
+    await emit("step.started", { step: "connect_proxy", message: "Connecting to proxy network…" });
     await networkConnect(PROXY_NETWORK, name);
+    await emit("step.completed", { step: "connect_proxy", progressPct: 93, message: "Connected to proxy network" });
 
     // ── 7. Backup sidecar (start immediately) ─────────────────────────────────
+    await emit("step.started", { step: "create_backup", message: "Creating backup sidecar…" });
     const backupEnv: string[] = [
       `RCON_HOST=${name}`,
       "RCON_PORT=25575",
@@ -219,8 +253,12 @@ export async function deployServer(server: ServerRow): Promise<{ ok: boolean; er
         NetworkMode: network,
       },
     });
+    await emit("step.completed", { step: "create_backup", progressPct: 97, message: "Backup sidecar created" });
+
+    await emit("step.started", { step: "start_backup", message: "Starting backup sidecar…" });
     await containerStart(`${name}-backup`);
     logger.info("deploy.backup_started", { serverName: name });
+    await emit("step.completed", { step: "start_backup", progressPct: 100, message: "Backup sidecar started" });
 
     logger.audit("deploy.complete", { serverName: name });
     return { ok: true };

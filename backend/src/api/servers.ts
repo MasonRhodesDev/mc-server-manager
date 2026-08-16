@@ -1,8 +1,9 @@
 import Elysia, { t } from "elysia";
 import { db } from "../db/index.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
-import { getContainerStatus, startContainer, stopContainer, containerLogs } from "../services/docker.js";
+import { getContainerStatus, startContainer, stopContainer, containerLogs, disconnectNetwork } from "../services/docker.js";
 import { deployServer, undeployServer } from "../services/deploy.js";
+import { createTask, startTask, completeTask, failTask } from "../services/tasks.js";
 import { logger } from "../lib/logger.js";
 
 export const serverRoutes = new Elysia({ prefix: "/api/servers" })
@@ -18,6 +19,7 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
   // POST /api/servers
   .post("/", async ({ body, set, currentUser }) => {
     const id = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+    const now = new Date().toISOString();
     await db.insertInto("servers").values({
       id,
       name: body.name,
@@ -31,7 +33,9 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
       server_hostname: body.serverHostname,
       server_port: body.serverPort,
       router_api_port: body.routerApiPort,
-      state: "stopped",
+      state: "created",
+      created_at: now,
+      updated_at: now,
     }).execute();
 
     const server = await db.selectFrom("servers").selectAll().where("id", "=", id).executeTakeFirst();
@@ -101,11 +105,28 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
     }),
   })
 
-  // DELETE /api/servers/:id (admin only)
+  // DELETE /api/servers/:id (admin only — removes DB record + tears down Docker resources)
   .use(requireAdmin)
   .delete("/:id", async ({ params, set, currentUser }) => {
     const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!server) { set.status = 404; return { error: "Server not found" }; }
+
+    // Block if a deploy is in flight — tearing down mid-deploy would leave things in a broken state
+    const activeTask = await db.selectFrom("tasks").select("id")
+      .where("server_id", "=", params.id)
+      .where("kind", "=", "deploy")
+      .where("status", "in", ["queued", "running"])
+      .executeTakeFirst();
+    if (activeTask) {
+      set.status = 409;
+      return { error: "Deploy is in progress — wait for it to finish before deleting.", taskId: activeTask.id };
+    }
+
+    // Tear down Docker resources; wrap so a Docker failure doesn't block the DB delete
+    await undeployServer(server.name).catch(err =>
+      logger.warn("server.delete_undeploy_failed", { serverId: params.id, error: String(err) })
+    );
+
     await db.deleteFrom("servers").where("id", "=", params.id).execute();
     logger.audit("server.delete", {
       userId: currentUser.id,
@@ -116,15 +137,26 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
     return { success: true };
   })
 
-  // DELETE /api/servers/:id (admin only — also remove containers)
-  // Note: requireAdmin already applied above; this overrides the previous delete to also undeploy
-
   // ── Control endpoints ─────────────────────────────────────────────────────
 
   // POST /api/servers/:id/control/deploy — create containers for the first time (or redeploy)
   .post("/:id/control/deploy", async ({ params, set, currentUser }) => {
     const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!server) { set.status = 404; return { error: "Server not found" }; }
+
+    // Reject if a deploy is already in flight
+    const activeTask = await db
+      .selectFrom("tasks")
+      .select("id")
+      .where("server_id", "=", params.id)
+      .where("kind", "=", "deploy")
+      .where("status", "in", ["queued", "running"])
+      .executeTakeFirst();
+
+    if (activeTask) {
+      set.status = 409;
+      return { error: "Deploy already in progress", taskId: activeTask.id };
+    }
 
     logger.audit("server.deploy", {
       userId: currentUser.id,
@@ -138,19 +170,31 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
       .where("id", "=", params.id)
       .execute();
 
-    // Run deploy in background — images can take time to pull
-    deployServer(server).then(async result => {
-      const newState = result.ok ? "stopped" : "error"; // stopped = ready; error = deploy failed
-      await db.updateTable("servers")
-        .set({ state: newState, updated_at: new Date().toISOString() })
-        .where("id", "=", params.id)
-        .execute();
-      if (!result.ok) {
-        logger.error("server.deploy_failed", { serverId: server.id, error: result.error });
-      }
-    });
+    const { taskId, emit } = await createTask("deploy", server.id);
 
-    return { status: "deploying", message: "Pulling images and creating containers — this may take a minute." };
+    // Run in background — images can take several minutes to pull
+    (async () => {
+      await startTask(taskId);
+      await emit("task.started", { message: "Pulling images and creating containers…" });
+      const result = await deployServer(server, emit);
+      if (result.ok) {
+        await completeTask(taskId);
+        await db.updateTable("servers")
+          .set({ state: "stopped", updated_at: new Date().toISOString() })
+          .where("id", "=", params.id)
+          .execute();
+      } else {
+        await failTask(taskId, result.error ?? "Deploy failed");
+        logger.error("server.deploy_failed", { serverId: server.id, error: result.error });
+        await db.updateTable("servers")
+          .set({ state: "stopped", updated_at: new Date().toISOString() })
+          .where("id", "=", params.id)
+          .execute();
+      }
+    })();
+
+    set.status = 202;
+    return { taskId, status: "queued", message: "Deploy started — subscribe to task events for progress." };
   })
 
   // POST /api/servers/:id/control/start
@@ -158,13 +202,18 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
     const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!server) { set.status = 404; return { error: "Server not found" }; }
 
-    if (server.state === "deploying") {
+    // Block start if a deploy task is in flight (replaces the dead server.state === "deploying" check)
+    const activeDeployTask = await db
+      .selectFrom("tasks")
+      .select(["id"])
+      .where("server_id", "=", params.id)
+      .where("kind", "=", "deploy")
+      .where("status", "in", ["queued", "running"])
+      .executeTakeFirst();
+
+    if (activeDeployTask) {
       set.status = 409;
-      return { error: "Server is currently being deployed — wait for it to finish before starting." };
-    }
-    if (server.state === "error") {
-      set.status = 409;
-      return { error: "Server deploy failed — run /control/deploy again before trying to start." };
+      return { error: "Server is currently being deployed — wait for it to finish before starting.", taskId: activeDeployTask.id };
     }
 
     logger.audit("server.start", {
@@ -174,12 +223,37 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
       serverName: server.name,
     });
 
-    const [gameResult, routerResult] = await Promise.all([
+    let [gameResult, routerResult] = await Promise.all([
       startContainer(server.name),
       startContainer(`${server.name}-router`),
     ]);
 
+    // If start failed because a referenced network is missing (stale mc-proxy reference),
+    // disconnect the dead network and retry once.
+    if (!gameResult.ok && gameResult.networkMissing && gameResult.missingNetwork) {
+      logger.warn("servers.fixing_stale_network", {
+        serverId: server.id,
+        container: server.name,
+        network: gameResult.missingNetwork,
+      });
+      await disconnectNetwork(gameResult.missingNetwork, server.name);
+      gameResult = await startContainer(server.name);
+    }
+
     if (!gameResult.ok || !routerResult.ok) {
+      // One or both containers missing — DB is out of sync; snap back to 'created'
+      // so the UI shows Deploy instead of Start on next load.
+      if (gameResult.notFound || routerResult.notFound) {
+        await db.updateTable("servers")
+          .set({ state: "created", updated_at: new Date().toISOString() })
+          .where("id", "=", params.id)
+          .execute();
+        set.status = 409;
+        return {
+          error: "Server containers are missing — please redeploy the server.",
+          detail: { game: gameResult, router: routerResult },
+        };
+      }
       set.status = 503;
       return {
         error: gameResult.error ?? routerResult.error ?? "Failed to start containers",
@@ -208,6 +282,14 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
 
     const result = await stopContainer(server.name);
     if (!result.ok) {
+      // Container already gone — treat as stopped/undeployed and sync DB state
+      if (result.notFound) {
+        await db.updateTable("servers")
+          .set({ state: "created", updated_at: new Date().toISOString() })
+          .where("id", "=", params.id)
+          .execute();
+        return { status: "created" };
+      }
       set.status = 503;
       return { error: result.error ?? "Failed to stop container" };
     }

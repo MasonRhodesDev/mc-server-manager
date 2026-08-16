@@ -7,6 +7,7 @@ import { serverRoutes } from "./api/servers.js";
 import { backupRoutes } from "./api/backups.js";
 import { ftbRoutes } from "./api/ftb.js";
 import { settingsRoutes } from "./api/settings.js";
+import { taskSnapshotRoutes, taskStreamRoutes } from "./api/tasks.js";
 import { logger } from "./lib/logger.js";
 
 const PORT = Number(process.env.PORT ?? 3001);
@@ -61,6 +62,8 @@ const app = new Elysia()
   .use(backupRoutes)
   .use(ftbRoutes)
   .use(settingsRoutes)
+  .use(taskSnapshotRoutes)
+  .use(taskStreamRoutes)
 
   // ── 404 catch-all ────────────────────────────────────────────────────────
   .all("*", ({ set }) => {

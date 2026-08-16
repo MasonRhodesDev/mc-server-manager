@@ -1,38 +1,9 @@
 import Elysia, { t } from "elysia";
 import { db } from "../db/index.js";
 import { requireAuth } from "../middleware/auth.js";
-import { inspectContainer } from "../services/docker.js";
 import { logger } from "../lib/logger.js";
-import { join } from "path";
-import { $ } from "bun";
-
-const BACKUPS_PATH = process.env.BACKUPS_PATH ?? "/mnt/user/appdata/minecraft-backups";
-const DATA_PATH = process.env.DATA_PATH ?? "/mnt/user/appdata/minecraft";
-
-async function runBackup(serverName: string, label: string, type: "auto" | "manual"): Promise<string> {
-  const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  const filename = `${serverName}-${type}-${ts}.tar.gz`;
-  const dir = join(BACKUPS_PATH, serverName);
-  const dest = join(dir, filename);
-
-  await $`mkdir -p ${dir}`;
-
-  const container = await inspectContainer(serverName);
-  if (container?.State.Running) {
-    // Save-flush via rcon-cli inside the container
-    await $`docker exec ${serverName} rcon-cli save-off`.nothrow();
-    await $`docker exec ${serverName} rcon-cli save-all`.nothrow();
-  }
-
-  const dataDir = join(DATA_PATH, serverName, "data");
-  await $`tar czf ${dest} -C ${dataDir} .`;
-
-  if (container?.State.Running) {
-    await $`docker exec ${serverName} rcon-cli save-on`.nothrow();
-  }
-
-  return dest;
-}
+import { runBackupWithTask, runRestoreWithTask } from "../services/backups.js";
+import { createTask, startTask, completeTask, failTask } from "../services/tasks.js";
 
 export const backupRoutes = new Elysia({ prefix: "/api/servers/:id/backups" })
   .use(requireAuth)
@@ -54,7 +25,7 @@ export const backupRoutes = new Elysia({ prefix: "/api/servers/:id/backups" })
     if (!server) { set.status = 404; return { error: "Server not found" }; }
 
     const label = body.label ?? (body.manual ? "Manual backup" : "Auto backup");
-    const type = body.manual ? "manual" as const : "auto" as const;
+    const type  = body.manual ? "manual" as const : "auto" as const;
 
     logger.audit("backup.create", {
       userId: currentUser.id,
@@ -65,25 +36,28 @@ export const backupRoutes = new Elysia({ prefix: "/api/servers/:id/backups" })
       type,
     });
 
-    const filePath = await runBackup(server.name, label, type);
+    const { taskId, emit } = await createTask("backup", server.id);
 
-    // Get file size
-    const stat = await import("fs/promises").then(fs => fs.stat(filePath).catch(() => ({ size: 0 })));
+    (async () => {
+      await startTask(taskId);
+      await emit("task.started", { message: `Creating ${type} backup: ${label}` });
+      try {
+        const result = await runBackupWithTask(server.id, server.name, label, type, emit);
+        // Fetch the full backup record to include in the success payload
+        const backup = await db
+          .selectFrom("backups")
+          .selectAll()
+          .where("id", "=", result.backupId)
+          .executeTakeFirst();
+        await completeTask(taskId, backup ?? null);
+      } catch (err) {
+        logger.error("backup.failed", { serverId: server.id, error: String(err) });
+        await failTask(taskId, String(err));
+      }
+    })();
 
-    const backupId = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
-    await db.insertInto("backups").values({
-      id: backupId,
-      server_id: params.id,
-      label,
-      file_path: filePath,
-      size_bytes: stat.size,
-      type,
-    }).execute();
-
-    logger.info("backup.created", { backupId, serverId: server.id, filePath, sizeBytes: stat.size });
-    const backup = await db.selectFrom("backups").selectAll().where("id", "=", backupId).executeTakeFirst();
-    set.status = 201;
-    return { backup };
+    set.status = 202;
+    return { taskId, status: "queued" };
   }, {
     body: t.Object({
       manual: t.Optional(t.Boolean()),
@@ -99,8 +73,6 @@ export const backupRoutes = new Elysia({ prefix: "/api/servers/:id/backups" })
     const backup = await db.selectFrom("backups").selectAll().where("id", "=", params.backupId).executeTakeFirst();
     if (!backup) { set.status = 404; return { error: "Backup not found" }; }
 
-    const dataDir = join(DATA_PATH, server.name, "data");
-
     logger.audit("backup.restore", {
       userId: currentUser.id,
       username: currentUser.username,
@@ -111,18 +83,22 @@ export const backupRoutes = new Elysia({ prefix: "/api/servers/:id/backups" })
       filePath: backup.file_path,
     });
 
-    // Stop game server
-    await $`docker stop ${server.name}`.nothrow();
+    const { taskId, emit } = await createTask("restore", server.id);
 
-    // Wipe and restore
-    await $`rm -rf ${dataDir}`;
-    await $`mkdir -p ${dataDir}`;
-    await $`tar xzf ${backup.file_path} -C ${dataDir}`;
+    (async () => {
+      await startTask(taskId);
+      await emit("task.started", { message: `Restoring from: ${backup.label}` });
+      try {
+        await runRestoreWithTask(server.id, server.name, backup.file_path, backup.label, emit);
+        await completeTask(taskId, { restoredFrom: backup.label, restoredAt: new Date().toISOString() });
+      } catch (err) {
+        logger.error("restore.failed", { serverId: server.id, backupId: backup.id, error: String(err) });
+        await failTask(taskId, String(err));
+      }
+    })();
 
-    await db.updateTable("servers").set({ state: "stopped", updated_at: new Date().toISOString() }).where("id", "=", params.id).execute();
-
-    logger.info("backup.restored", { serverId: server.id, backupId: backup.id });
-    return { success: true, restoredFrom: backup.label, restoredAt: new Date().toISOString() };
+    set.status = 202;
+    return { taskId, status: "queued" };
   })
 
   // DELETE /api/servers/:id/backups/:backupId
