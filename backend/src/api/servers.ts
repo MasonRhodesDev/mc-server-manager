@@ -6,6 +6,12 @@ import { deployServer, undeployServer } from "../services/deploy.js";
 import { createTask, startTask, completeTask, failTask } from "../services/tasks.js";
 import { logger } from "../lib/logger.js";
 
+function generateRconPassword(): string {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export const serverRoutes = new Elysia({ prefix: "/api/servers" })
   .use(requireAuth)
 
@@ -29,7 +35,7 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
         modpack_version_id: body.modpackVersionId ?? null,
         memory_gb: body.memoryGb ?? 8,
         init_memory_gb: body.initMemoryGb ?? 2,
-        rcon_password: body.rconPassword,
+        rcon_password: body.rconPassword ?? generateRconPassword(),
         auto_scale_down_after: body.autoScaleDownAfter ?? "10m",
         server_hostname: body.serverHostname,
         server_port: body.serverPort,
@@ -65,7 +71,7 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
       modpackVersionId: t.Optional(t.Nullable(t.Number())),
       memoryGb: t.Optional(t.Number()),
       initMemoryGb: t.Optional(t.Number()),
-      rconPassword: t.String({ minLength: 1 }),
+      rconPassword: t.Optional(t.String({ minLength: 1 })),
       autoScaleDownAfter: t.Optional(t.String()),
       serverHostname: t.String({ minLength: 1 }),
       serverPort: t.Number(),
