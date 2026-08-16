@@ -11,6 +11,7 @@
  * The game container is also connected to PROXY_NETWORK (mc-proxy) so Velocity can reach it.
  */
 
+import { statSync } from "node:fs";
 import { logger } from "../lib/logger.js";
 import type { ServerRow } from "../types/index.js";
 import type { TaskEmitter } from "./tasks.js";
@@ -20,6 +21,13 @@ const BACKUPS_PATH  = process.env.BACKUPS_PATH  ?? "/mnt/user/appdata/minecraft-
 const PROXY_NETWORK = process.env.PROXY_NETWORK ?? "mc-proxy";
 const TZ            = process.env.TZ            ?? "America/Los_Angeles";
 const DOCKER_SOCKET = process.env.DOCKER_HOST   ?? "unix:///var/run/docker.sock";
+
+function dockerSocketGid(): string {
+  const path = DOCKER_SOCKET.startsWith("unix://")
+    ? DOCKER_SOCKET.slice("unix://".length)
+    : "/var/run/docker.sock";
+  return String(statSync(path).gid);
+}
 
 // ── Docker HTTP helpers ───────────────────────────────────────────────────────
 
@@ -164,12 +172,14 @@ export async function deployServer(
       `AUTO_SCALE_DOWN_AFTER=${server.auto_scale_down_after}`,
       `ASLEEP_MOTD=Server is sleeping. Join to wake it up!`,
       `LOADING_MOTD=Server is starting up... reconnect shortly.`,
+      `DEFAULT=${name}:25565`,
     ];
     await containerCreate(`${name}-router`, {
       Image: "itzg/mc-router:latest",
       Env: routerEnv,
       HostConfig: {
         Binds: ["/var/run/docker.sock:/var/run/docker.sock:ro"],
+        GroupAdd: [dockerSocketGid()],
         PortBindings: {
           "25565/tcp": [{ HostIp: "", HostPort: String(server.server_port) }],
           "25564/tcp": [{ HostIp: "127.0.0.1", HostPort: String(server.router_api_port) }],
@@ -212,7 +222,7 @@ export async function deployServer(
     await containerCreate(name, {
       Image: "itzg/minecraft-server:java25",
       Env: gameEnv,
-      Labels: { "mc-router.host": server.server_hostname },
+      Labels: { "mc-router.host": server.server_hostname, "mc-router.default": "true" },
       Volumes: { "/data": {} },
       HostConfig: {
         Binds: [`${dataDir}:/data`],
