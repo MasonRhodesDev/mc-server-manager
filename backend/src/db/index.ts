@@ -20,6 +20,22 @@ if (dbDir) {
 // ── SQLite instance ───────────────────────────────────────────────────────────
 export const sqlite = new Database(DB_PATH);
 
+// Recreate auth_providers if it still has the old Discord/GitHub/Google CHECK.
+{
+  const row: unknown = sqlite.query(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'auth_providers'"
+  ).get();
+  if (
+    typeof row === "object" &&
+    row !== null &&
+    "sql" in row &&
+    typeof row.sql === "string" &&
+    !row.sql.includes("'microsoft'")
+  ) {
+    sqlite.run("DROP TABLE auth_providers");
+  }
+}
+
 // Apply schema on startup
 const schema = readFileSync(join(__dirname, "schema.sql"), "utf8");
 sqlite.run(schema);
@@ -30,6 +46,7 @@ import type {
   UserRow,
   BackupRow,
   AuthProviderRow,
+  AuthAllowlistRow,
   FtbCacheRow,
   SessionRow,
   TaskRow,
@@ -41,6 +58,7 @@ interface Database_Tables {
   users: UserRow;
   backups: BackupRow;
   auth_providers: AuthProviderRow;
+  auth_allowlist: AuthAllowlistRow;
   ftb_cache: FtbCacheRow;
   sessions: SessionRow;
   tasks: TaskRow;

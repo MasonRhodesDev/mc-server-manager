@@ -66,9 +66,7 @@ const providers = ref<{ provider: string; enabled: boolean }[]>([]);
 const isDev = import.meta.env.DEV;
 
 const providerNames: Record<string, string> = {
-  discord: "Discord",
-  github: "GitHub",
-  google: "Google",
+  microsoft: "Microsoft",
 };
 
 onMounted(async () => {

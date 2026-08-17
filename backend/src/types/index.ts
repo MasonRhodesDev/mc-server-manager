@@ -41,11 +41,15 @@ export interface BackupRow {
 
 export interface AuthProviderRow {
   id: string;
-  provider: "discord" | "github" | "google";
+  provider: "microsoft";
   client_id: string;
   client_secret: string;
   enabled: number; // SQLite stores booleans as 0/1
   redirect_uri: string;
+}
+
+export interface AuthAllowlistRow {
+  email: string;
 }
 
 export interface FtbCacheRow {

@@ -52,15 +52,20 @@ CREATE TABLE IF NOT EXISTS backups (
 -- ── Auth providers ────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS auth_providers (
   id            TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
-  provider      TEXT NOT NULL UNIQUE CHECK (provider IN ('discord', 'github', 'google')),
+  provider      TEXT NOT NULL UNIQUE CHECK (provider IN ('microsoft')),
   client_id     TEXT NOT NULL DEFAULT '',
   client_secret TEXT NOT NULL DEFAULT '',
   enabled       INTEGER NOT NULL DEFAULT 0,
   redirect_uri  TEXT NOT NULL DEFAULT ''
 );
 
--- Seed default provider rows (disabled until configured)
-INSERT OR IGNORE INTO auth_providers (provider) VALUES ('discord'), ('github'), ('google');
+-- Seed default provider row (disabled until configured)
+INSERT OR IGNORE INTO auth_providers (provider) VALUES ('microsoft');
+
+-- Optional login allowlist. Empty = any Microsoft account may sign in.
+CREATE TABLE IF NOT EXISTS auth_allowlist (
+  email TEXT PRIMARY KEY NOT NULL
+);
 
 -- ── FTB cache ─────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS ftb_cache (

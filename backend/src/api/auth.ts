@@ -3,6 +3,11 @@ import { db } from "../db/index.js";
 import { jwtPlugin, requireAuth, type JWTPayload } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
 
+const MS_AUTHORIZE = "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize";
+const MS_TOKEN = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
+const MS_GRAPH_ME = "https://graph.microsoft.com/v1.0/me";
+const MS_SCOPE = "openid profile email User.Read";
+
 // OAuth state map (in-memory; fine for single-instance)
 const oauthStates = new Map<string, { provider: string; createdAt: number }>();
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -19,63 +24,94 @@ setInterval(() => {
   }
 }, 60_000);
 
-// ── OAuth provider configs ────────────────────────────────────────────────────
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
-function getOAuthUrl(provider: "discord" | "github" | "google", clientId: string, redirectUri: string, state: string): string {
-  switch (provider) {
-    case "discord":
-      return `https://discord.com/api/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify+email&state=${state}`;
-    case "github":
-      return `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=read:user+user:email&state=${state}`;
-    case "google":
-      return `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=openid+email+profile&state=${state}`;
-  }
+function stringField(obj: Record<string, unknown>, key: string): string | null {
+  const value = obj[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function getOAuthUrl(clientId: string, redirectUri: string, state: string): string {
+  const params = new URLSearchParams({
+    client_id: clientId,
+    response_type: "code",
+    redirect_uri: redirectUri,
+    response_mode: "query",
+    scope: MS_SCOPE,
+    state,
+  });
+  return `${MS_AUTHORIZE}?${params.toString()}`;
+}
+
+function slugUsername(displayName: string, email: string): string {
+  const fromName = displayName.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+  if (fromName.length > 0) return fromName;
+  const local = email.split("@")[0] ?? "user";
+  const fromEmail = local.toLowerCase().replace(/[^a-z0-9_]/g, "");
+  return fromEmail.length > 0 ? fromEmail : "user";
+}
+
+async function uniqueUsername(base: string, providerId: string): Promise<string> {
+  const existing = await db
+    .selectFrom("users")
+    .select(["provider_id"])
+    .where("username", "=", base)
+    .executeTakeFirst();
+  if (!existing || existing.provider_id === providerId) return base;
+  return `${base}_${providerId.slice(0, 8)}`;
 }
 
 async function exchangeCode(
-  provider: "discord" | "github" | "google",
   code: string,
   clientId: string,
   clientSecret: string,
   redirectUri: string
 ): Promise<{ id: string; email: string; username: string; avatarUrl: string | null }> {
-  // Exchange code for access token
-  let tokenRes: Response;
-  switch (provider) {
-    case "discord": {
-      tokenRes = await fetch("https://discord.com/api/oauth2/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, grant_type: "authorization_code", code, redirect_uri: redirectUri }),
-      });
-      const tokenData = await tokenRes.json() as any;
-      const me = await fetch("https://discord.com/api/users/@me", { headers: { Authorization: `Bearer ${tokenData.access_token}` } });
-      const u = await me.json() as any;
-      return { id: u.id, email: u.email, username: u.username, avatarUrl: u.avatar ? `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png` : null };
-    }
-    case "github": {
-      tokenRes = await fetch("https://github.com/login/oauth/access_token", {
-        method: "POST",
-        headers: { Accept: "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code, redirect_uri: redirectUri }),
-      });
-      const tokenData = await tokenRes.json() as any;
-      const me = await fetch("https://api.github.com/user", { headers: { Authorization: `Bearer ${tokenData.access_token}`, "User-Agent": "mc-server-manager/1.0" } });
-      const u = await me.json() as any;
-      return { id: String(u.id), email: u.email ?? `${u.login}@github`, username: u.login, avatarUrl: u.avatar_url ?? null };
-    }
-    case "google": {
-      tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, grant_type: "authorization_code", code, redirect_uri: redirectUri }),
-      });
-      const tokenData = await tokenRes.json() as any;
-      const me = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", { headers: { Authorization: `Bearer ${tokenData.access_token}` } });
-      const u = await me.json() as any;
-      return { id: u.id, email: u.email, username: u.name.replace(/\s+/g, "_").toLowerCase(), avatarUrl: u.picture ?? null };
-    }
+  const tokenRes = await fetch(MS_TOKEN, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: redirectUri,
+      scope: MS_SCOPE,
+    }),
+  });
+  const tokenJson: unknown = await tokenRes.json();
+  if (!isObject(tokenJson)) throw new Error("Invalid token response from Microsoft");
+  const accessToken = stringField(tokenJson, "access_token");
+  if (!accessToken) {
+    const description = stringField(tokenJson, "error_description") ?? "Microsoft token exchange failed";
+    throw new Error(description);
   }
+
+  const meRes = await fetch(MS_GRAPH_ME, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const meJson: unknown = await meRes.json();
+  if (!isObject(meJson)) throw new Error("Invalid profile response from Microsoft Graph");
+
+  const id = stringField(meJson, "id");
+  const mail = stringField(meJson, "mail");
+  const upn = stringField(meJson, "userPrincipalName");
+  const displayName = stringField(meJson, "displayName") ?? "";
+  const email = (mail ?? upn)?.toLowerCase();
+  if (!id || !email) throw new Error("Microsoft account did not return an id and email");
+
+  return {
+    id,
+    email,
+    username: slugUsername(displayName, email),
+    avatarUrl: null,
+  };
+}
+
+async function isEmailAllowed(email: string): Promise<boolean> {
+  const rows = await db.selectFrom("auth_allowlist").selectAll().execute();
+  if (rows.length === 0) return true;
+  return rows.some(r => r.email === email);
 }
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -90,7 +126,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
       return { error: "Not found" };
     }
 
-    const username = (body as any)?.username ?? "devuser";
+    const username = body.username ?? "devuser";
     const provider = "dev";
     const providerId = `dev-${username}`;
 
@@ -121,6 +157,8 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     const token = await jwt.sign({ userId: user.id, role: user.role } satisfies JWTPayload);
     logger.audit("auth.dev_login", { userId: user.id, username: user.username, role: user.role });
     return { token, user: { id: user.id, email: user.email, username: user.username, avatarUrl: user.avatar_url, role: user.role } };
+  }, {
+    body: t.Object({ username: t.Optional(t.String()) }),
   })
 
   // GET /api/auth/providers — list configured/enabled providers
@@ -135,9 +173,9 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     };
   })
 
-  // GET /api/auth/login?provider=discord
+  // GET /api/auth/login?provider=microsoft
   .get("/login", async ({ query, set }) => {
-    const provider = query.provider as "discord" | "github" | "google";
+    const provider = query.provider;
     const row = await db.selectFrom("auth_providers").selectAll().where("provider", "=", provider).executeTakeFirst();
     if (!row || !row.enabled || !row.client_id) {
       set.status = 400;
@@ -145,8 +183,8 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     }
     const state = generateState();
     oauthStates.set(state, { provider, createdAt: Date.now() });
-    return { redirect_uri: getOAuthUrl(provider, row.client_id, row.redirect_uri, state) };
-  }, { query: t.Object({ provider: t.String() }) })
+    return { redirect_uri: getOAuthUrl(row.client_id, row.redirect_uri, state) };
+  }, { query: t.Object({ provider: t.Literal("microsoft") }) })
 
   // GET /api/auth/callback?code=...&state=...
   .get("/callback", async ({ query, jwt, set }) => {
@@ -155,11 +193,29 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     if (!stateData) { set.status = 400; return { error: "Invalid or expired state" }; }
     oauthStates.delete(state);
 
-    const provider = stateData.provider as "discord" | "github" | "google";
+    const provider = stateData.provider;
+    if (provider !== "microsoft") {
+      set.status = 400;
+      return { error: "Invalid provider" };
+    }
     const row = await db.selectFrom("auth_providers").selectAll().where("provider", "=", provider).executeTakeFirst();
     if (!row) { set.status = 500; return { error: "Provider config missing" }; }
 
-    const profile = await exchangeCode(provider, code, row.client_id, row.client_secret, row.redirect_uri);
+    let profile: { id: string; email: string; username: string; avatarUrl: string | null };
+    try {
+      profile = await exchangeCode(code, row.client_id, row.client_secret, row.redirect_uri);
+    } catch (err) {
+      set.status = 502;
+      return { error: err instanceof Error ? err.message : "OAuth exchange failed" };
+    }
+
+    if (!(await isEmailAllowed(profile.email))) {
+      set.status = 403;
+      logger.audit("auth.denied", { email: profile.email, provider });
+      return { error: "This Microsoft account is not allowed" };
+    }
+
+    const username = await uniqueUsername(profile.username, profile.id);
 
     // Upsert user
     const existingUser = await db.selectFrom("users").selectAll().where("provider", "=", provider).where("provider_id", "=", profile.id).executeTakeFirst();
@@ -168,7 +224,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     if (existingUser) {
       userId = existingUser.id;
       await db.updateTable("users")
-        .set({ avatar_url: profile.avatarUrl, username: profile.username })
+        .set({ avatar_url: profile.avatarUrl, username, email: profile.email })
         .where("id", "=", userId)
         .execute();
     } else {
@@ -179,7 +235,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
       await db.insertInto("users").values({
         id: userId,
         email: profile.email,
-        username: profile.username,
+        username,
         avatar_url: profile.avatarUrl,
         role: isFirst ? "admin" : "viewer",
         provider,

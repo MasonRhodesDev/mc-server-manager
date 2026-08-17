@@ -1,6 +1,11 @@
 <template>
   <div class="max-w-lg space-y-6">
-    <h2 class="text-lg font-semibold text-coal-100">Authentication Providers</h2>
+    <h2 class="text-lg font-semibold text-coal-100">Authentication</h2>
+    <p class="text-coal-400 text-sm">
+      Sign-in uses personal Microsoft accounts (the same identity Minecraft uses).
+      Register an Azure app with account type “Personal Microsoft accounts only”
+      and a Web redirect URI that matches the field below.
+    </p>
 
     <div v-if="loading" class="flex justify-center py-12">
       <Loader2 class="w-5 h-5 text-coal-400 animate-spin" />
@@ -26,22 +31,43 @@
         <template v-if="p.enabled">
           <div>
             <label class="label">Client ID</label>
-            <input v-model="p.clientId" class="input" placeholder="OAuth client ID" />
+            <input v-model="p.clientId" class="input" placeholder="Azure application (client) ID" />
           </div>
           <div>
             <label class="label">Client Secret</label>
-            <input v-model="p.clientSecret" type="password" class="input" placeholder="OAuth client secret" />
+            <input v-model="p.clientSecret" type="password" class="input" placeholder="Leave blank to keep the current secret" />
           </div>
           <div>
             <label class="label">Redirect URI</label>
-            <input v-model="p.redirectUri" class="input" :placeholder="`https://your-domain/auth/callback?provider=${p.provider}`" />
+            <input v-model="p.redirectUri" class="input" placeholder="https://your-domain/auth/callback" />
           </div>
-          <button @click="save(p)" class="btn-primary text-xs" :disabled="saving === p.provider">
-            <Loader2 v-if="saving === p.provider" class="w-3.5 h-3.5 animate-spin" />
-            Save
-          </button>
         </template>
       </div>
+
+      <div class="card space-y-3">
+        <div>
+          <h3 class="text-sm font-semibold text-coal-100">Allowed users</h3>
+          <p class="text-coal-500 text-xs mt-1">
+            One email per line. Leave empty to allow any Microsoft account.
+            First user becomes admin. If you add a list, include your own email or you will be locked out.
+          </p>
+        </div>
+        <textarea
+          v-model="allowedEmailsText"
+          class="input min-h-[8rem] font-mono text-xs"
+          placeholder="you@outlook.com"
+        />
+      </div>
+
+      <button
+        v-if="providers[0]"
+        @click="save(providers[0])"
+        class="btn-primary text-xs"
+        :disabled="saving !== null"
+      >
+        <Loader2 v-if="saving !== null" class="w-3.5 h-3.5 animate-spin" />
+        Save
+      </button>
     </div>
   </div>
 </template>
@@ -53,18 +79,42 @@ import ProviderIcon from "../../components/ProviderIcon.vue";
 import { settings as settingsApi } from "../../api/endpoints.js";
 import { useUIStore } from "../../stores/ui.js";
 
+type ProviderForm = {
+  provider: string;
+  clientId: string;
+  clientSecret: string;
+  enabled: boolean;
+  redirectUri: string;
+};
+
 const ui = useUIStore();
 const loading = ref(true);
 const saving = ref<string | null>(null);
-const providers = ref<any[]>([]);
+const providers = ref<ProviderForm[]>([]);
+const allowedEmailsText = ref("");
 
 onMounted(async () => {
   const data = await settingsApi.getAuth();
-  providers.value = data.providers.map((p: any) => ({ ...p, clientSecret: "" }));
+  const rows: unknown = data.providers;
+  if (Array.isArray(rows)) {
+    providers.value = rows.flatMap((row): ProviderForm[] => {
+      if (typeof row !== "object" || row === null) return [];
+      const provider = "provider" in row && typeof row.provider === "string" ? row.provider : null;
+      const clientId = "clientId" in row && typeof row.clientId === "string" ? row.clientId : "";
+      const enabled = "enabled" in row && typeof row.enabled === "boolean" ? row.enabled : false;
+      const redirectUri = "redirectUri" in row && typeof row.redirectUri === "string" ? row.redirectUri : "";
+      if (!provider) return [];
+      return [{ provider, clientId, clientSecret: "", enabled, redirectUri }];
+    });
+  }
+  const emails: unknown = data.allowedEmails;
+  if (Array.isArray(emails)) {
+    allowedEmailsText.value = emails.filter((e): e is string => typeof e === "string").join("\n");
+  }
   loading.value = false;
 });
 
-async function save(p: any) {
+async function save(p: ProviderForm) {
   saving.value = p.provider;
   try {
     await settingsApi.setAuthProvider(p.provider, {
@@ -72,6 +122,7 @@ async function save(p: any) {
       clientSecret: p.clientSecret || undefined,
       enabled: p.enabled,
       redirectUri: p.redirectUri,
+      allowedEmails: allowedEmailsText.value.split("\n"),
     });
     ui.notify("success", `${p.provider} settings saved`);
   } catch {
