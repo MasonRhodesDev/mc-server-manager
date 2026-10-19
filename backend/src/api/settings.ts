@@ -70,8 +70,8 @@ export const settingsRoutes = new Elysia({ prefix: "/api/settings" })
   // GET /api/settings/system
   .get("/system", () => ({
     settings: {
-      dataPath: process.env.DATA_PATH ?? "/mnt/user/appdata/minecraft",
-      backupsPath: process.env.BACKUPS_PATH ?? "/mnt/user/appdata/minecraft-backups",
+      dataPath: process.env.DATA_PATH ?? "/data",
+      backupsPath: process.env.BACKUPS_PATH ?? "/backups",
       defaultMemoryGb: Number(process.env.DEFAULT_MEMORY_GB ?? 8),
       ftbCacheTtlHours: Number(process.env.FTB_CACHE_TTL_HOURS ?? 1),
     },

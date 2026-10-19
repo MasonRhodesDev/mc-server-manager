@@ -61,7 +61,7 @@
       <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="label">Hostname</label>
-          <input v-model="form.serverHostname" class="input" placeholder="mc.immaduck.xyz" />
+          <input v-model="form.serverHostname" class="input" placeholder="mc.example.com" />
         </div>
         <div>
           <label class="label">Port</label>
@@ -132,7 +132,7 @@ const form = ref({
   memoryGb: 8,
   initMemoryGb: 2,
   rconPassword: "",
-  serverHostname: "mc.immaduck.xyz",
+  serverHostname: "mc.example.com",
   serverPort: 25566,
   routerApiPort: 25556,
   autoScaleDownAfter: "10m",

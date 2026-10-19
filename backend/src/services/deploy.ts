@@ -16,8 +16,8 @@ import { logger } from "../lib/logger.js";
 import type { ServerRow } from "../types/index.js";
 import type { TaskEmitter } from "./tasks.js";
 
-const DATA_PATH     = process.env.DATA_PATH     ?? "/mnt/user/appdata/minecraft";
-const BACKUPS_PATH  = process.env.BACKUPS_PATH  ?? "/mnt/user/appdata/minecraft-backups";
+const DATA_PATH     = process.env.DATA_PATH     ?? "/data";
+const BACKUPS_PATH  = process.env.BACKUPS_PATH  ?? "/backups";
 const PROXY_NETWORK = process.env.PROXY_NETWORK ?? "mc-proxy";
 const TZ            = process.env.TZ            ?? "America/Los_Angeles";
 const DOCKER_SOCKET = process.env.DOCKER_HOST   ?? "unix:///var/run/docker.sock";
