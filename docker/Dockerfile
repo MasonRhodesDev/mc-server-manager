@@ -30,8 +30,8 @@ RUN chmod +x /entrypoint.sh
 # Environment defaults (override via -e or docker-compose)
 ENV PORT=3000 \
     DB_PATH=/config/mc-manager.db \
-    DATA_PATH=/mnt/user/appdata/minecraft \
-    BACKUPS_PATH=/mnt/user/appdata/minecraft-backups \
+    DATA_PATH=/data \
+    BACKUPS_PATH=/backups \
     FRONTEND_URL=http://localhost:3000 \
     JWT_SECRET=change-me-in-production
 

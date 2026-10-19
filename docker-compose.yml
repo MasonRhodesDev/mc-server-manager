@@ -20,8 +20,8 @@ services:
     environment:
       PORT: "3000"
       DB_PATH: /config/mc-manager.db
-      DATA_PATH: /mnt/user/appdata/minecraft
-      BACKUPS_PATH: /mnt/user/appdata/minecraft-backups
+      DATA_PATH: "${DATA_PATH:-/data}"
+      BACKUPS_PATH: "${BACKUPS_PATH:-/backups}"
       JWT_SECRET: dev-secret-change-in-prod
       FRONTEND_URL: "http://localhost:5173"
       REDIS_URL: "redis://redis:6379"

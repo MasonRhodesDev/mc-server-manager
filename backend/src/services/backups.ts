@@ -10,8 +10,8 @@ import type { TaskEmitter } from "./tasks.js";
 import { join } from "path";
 import { $ } from "bun";
 
-const BACKUPS_PATH = process.env.BACKUPS_PATH ?? "/mnt/user/appdata/minecraft-backups";
-const DATA_PATH    = process.env.DATA_PATH    ?? "/mnt/user/appdata/minecraft";
+const BACKUPS_PATH = process.env.BACKUPS_PATH ?? "/backups";
+const DATA_PATH    = process.env.DATA_PATH    ?? "/data";
 
 // ── Backup ────────────────────────────────────────────────────────────────────
 
