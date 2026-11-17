@@ -3,7 +3,6 @@ import { getPackList, getPack, getPackVersions, getPackVersion, searchPacks } fr
 
 export const ftbRoutes = new Elysia({ prefix: "/api/ftb" })
 
-  // GET /api/ftb/packs?search=&limit=20&offset=0
   .get("/packs", async ({ query }) => {
     const { search, limit = "20", offset = "0" } = query;
     if (search && search.length > 0) {
@@ -18,7 +17,6 @@ export const ftbRoutes = new Elysia({ prefix: "/api/ftb" })
     }),
   })
 
-  // GET /api/ftb/packs/:packId
   .get("/packs/:packId", async ({ params, set }) => {
     try {
       const pack = await getPack(Number(params.packId));
@@ -29,13 +27,11 @@ export const ftbRoutes = new Elysia({ prefix: "/api/ftb" })
     }
   })
 
-  // GET /api/ftb/packs/:packId/versions
   .get("/packs/:packId/versions", async ({ params }) => {
     const versions = await getPackVersions(Number(params.packId));
     return { versions };
   })
 
-  // GET /api/ftb/packs/:packId/versions/:versionId — full manifest with mod list
   .get("/packs/:packId/versions/:versionId", async ({ params, set }) => {
     try {
       const version = await getPackVersion(Number(params.packId), Number(params.versionId));

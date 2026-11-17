@@ -6,7 +6,6 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Minecraft-inspired accent palette
         emerald: {
           DEFAULT: "#50fa7b",
         },

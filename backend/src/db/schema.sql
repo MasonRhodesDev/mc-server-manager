@@ -1,16 +1,12 @@
--- mc-server-manager database schema
--- Applied once at startup via migrate.ts
-
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 
--- ── Servers ───────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS servers (
   id                     TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
   name                   TEXT NOT NULL UNIQUE,
   server_type            TEXT NOT NULL DEFAULT 'FTBA',
   modpack_id             INTEGER,
-  modpack_version_id     INTEGER,         -- NULL = latest
+  modpack_version_id     INTEGER,
   memory_gb              INTEGER NOT NULL DEFAULT 8,
   init_memory_gb         INTEGER NOT NULL DEFAULT 2,
   rcon_password          TEXT NOT NULL,
@@ -24,7 +20,6 @@ CREATE TABLE IF NOT EXISTS servers (
   updated_at             DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- ── Users ─────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS users (
   id           TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
   email        TEXT UNIQUE NOT NULL,
@@ -38,7 +33,6 @@ CREATE TABLE IF NOT EXISTS users (
   UNIQUE(provider, provider_id)
 );
 
--- ── Backups ───────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS backups (
   id          TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
   server_id   TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
@@ -49,7 +43,6 @@ CREATE TABLE IF NOT EXISTS backups (
   created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- ── Auth providers ────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS auth_providers (
   id            TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
   provider      TEXT NOT NULL UNIQUE CHECK (provider IN ('microsoft')),
@@ -59,22 +52,18 @@ CREATE TABLE IF NOT EXISTS auth_providers (
   redirect_uri  TEXT NOT NULL DEFAULT ''
 );
 
--- Seed default provider row (disabled until configured)
 INSERT OR IGNORE INTO auth_providers (provider) VALUES ('microsoft');
 
--- Optional login allowlist. Empty = any Microsoft account may sign in.
 CREATE TABLE IF NOT EXISTS auth_allowlist (
   email TEXT PRIMARY KEY NOT NULL
 );
 
--- ── FTB cache ─────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS ftb_cache (
   pack_id    INTEGER PRIMARY KEY,
-  data       TEXT NOT NULL,            -- JSON blob
+  data       TEXT NOT NULL,
   fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- ── Sessions ──────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS sessions (
   id          TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
   user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -83,7 +72,6 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- ── Tasks ─────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS tasks (
   id           TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
   kind         TEXT NOT NULL CHECK (kind IN ('deploy', 'backup', 'restore')),
@@ -99,7 +87,6 @@ CREATE TABLE IF NOT EXISTS tasks (
   finished_at  DATETIME
 );
 
--- ── Task events ───────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS task_events (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -108,7 +95,6 @@ CREATE TABLE IF NOT EXISTS task_events (
   created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- ── Indexes ───────────────────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_backups_server_id  ON backups(server_id);
 CREATE INDEX IF NOT EXISTS idx_backups_created_at ON backups(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id   ON sessions(user_id);

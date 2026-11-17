@@ -43,7 +43,6 @@ export const useServersStore = defineStore("servers", () => {
           ? gameStatus
           : "stopped") as Server["state"];
       } catch {
-        // ignore individual failures
       }
     }
   }

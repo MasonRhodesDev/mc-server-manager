@@ -23,13 +23,12 @@ const app = new Elysia()
     },
   }))
 
-  // ── Per-request logging ───────────────────────────────────────────────────
   .derive(() => ({ _reqStart: Date.now() }))
 
   .onAfterResponse(({ request, set, _reqStart }) => {
     const ms = Date.now() - _reqStart;
     const url = new URL(request.url);
-    if (url.pathname.startsWith("/swagger")) return; // skip swagger noise
+    if (url.pathname.startsWith("/swagger")) return;
     logger.info("http", {
       method: request.method,
       path: url.pathname,
@@ -53,10 +52,8 @@ const app = new Elysia()
     });
   })
 
-  // ── Health check ─────────────────────────────────────────────────────────
   .get("/health", () => ({ status: "ok", ts: new Date().toISOString() }))
 
-  // ── API routes ────────────────────────────────────────────────────────────
   .use(authRoutes)
   .use(serverRoutes)
   .use(backupRoutes)
@@ -65,7 +62,6 @@ const app = new Elysia()
   .use(taskSnapshotRoutes)
   .use(taskStreamRoutes)
 
-  // ── 404 catch-all ────────────────────────────────────────────────────────
   .all("*", ({ set }) => {
     set.status = 404;
     return { error: "Not found" };

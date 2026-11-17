@@ -1,16 +1,3 @@
-/**
- * Deploy / undeploy a Minecraft server stack via the Docker socket API directly.
- * No subprocess, no docker CLI, no compose — pure HTTP over unix:///var/run/docker.sock.
- *
- * Stack layout per server:
- *   mc-<name>        bridge network (per-server isolation)
- *   <name>-router    itzg/mc-router  (public port, auto-sleep, restart=unless-stopped)
- *   <name>           itzg/minecraft-server:java21  (restart=no; router owns lifecycle)
- *   <name>-backup    itzg/mc-backup  (RCON-coordinated backups, restart=unless-stopped)
- *
- * The game container is also connected to PROXY_NETWORK (mc-proxy) so Velocity can reach it.
- */
-
 import { statSync } from "node:fs";
 import { logger } from "../lib/logger.js";
 import type { ServerRow } from "../types/index.js";
@@ -29,8 +16,6 @@ function dockerSocketGid(): string {
   return String(statSync(path).gid);
 }
 
-// ── Docker HTTP helpers ───────────────────────────────────────────────────────
-
 async function dockerApi(
   method: string,
   path: string,
@@ -43,7 +28,7 @@ async function dockerApi(
     body: body ? JSON.stringify(body) : undefined,
   };
   if (DOCKER_SOCKET.startsWith("unix://")) {
-    // @ts-ignore — Bun-specific unix socket option
+    // @ts-ignore
     init.unix = DOCKER_SOCKET.replace("unix://", "");
   }
   const res = await fetch(url, init);
@@ -59,7 +44,7 @@ async function dockerApi(
 
 async function networkCreate(name: string): Promise<void> {
   const r = await dockerApi("POST", "/networks/create", { Name: name, Driver: "bridge" });
-  if (r.status !== 201 && r.status !== 409) { // 409 = already exists
+  if (r.status !== 201 && r.status !== 409) {
     throw new Error(`networkCreate ${name}: HTTP ${r.status} — ${JSON.stringify(r.data)}`);
   }
 }
@@ -72,7 +57,7 @@ async function networkExists(name: string): Promise<boolean> {
 async function networkConnect(network: string, container: string): Promise<void> {
   if (!await networkExists(network)) {
     logger.info("deploy.proxy_network_absent", { network, container });
-    return; // skip silently — proxy network not required in dev
+    return;
   }
   const r = await dockerApi("POST", `/networks/${network}/connect`, { Container: container });
   if (r.status !== 200 && r.status !== 204) {
@@ -81,7 +66,7 @@ async function networkConnect(network: string, container: string): Promise<void>
 }
 
 async function containerRemove(name: string): Promise<void> {
-  await dockerApi("DELETE", `/containers/${name}?force=true`); // 404 is fine
+  await dockerApi("DELETE", `/containers/${name}?force=true`);
 }
 
 async function containerCreate(name: string, spec: unknown): Promise<string> {
@@ -94,14 +79,12 @@ async function containerCreate(name: string, spec: unknown): Promise<string> {
 
 async function containerStart(nameOrId: string): Promise<void> {
   const r = await dockerApi("POST", `/containers/${nameOrId}/start`);
-  if (r.status !== 204 && r.status !== 304) { // 304 = already started
+  if (r.status !== 204 && r.status !== 304) {
     throw new Error(`containerStart ${nameOrId}: HTTP ${r.status} — ${JSON.stringify(r.data)}`);
   }
 }
 
 async function pullImage(image: string): Promise<void> {
-  // POST /images/create streams NDJSON progress lines (not a single JSON body).
-  // Reading the full text body is what blocks until the pull finishes.
   const [repo = "", tag = "latest"] = image.split(":");
   const url = "http://localhost" + `/images/create?fromImage=${encodeURIComponent(repo)}&tag=${encodeURIComponent(tag)}`;
   const init: RequestInit = { method: "POST" };
@@ -111,12 +94,10 @@ async function pullImage(image: string): Promise<void> {
   }
   logger.info("deploy.pulling", { image });
   const res = await fetch(url, init);
-  await res.text(); // drain body — this is what waits for pull completion
+  await res.text();
   if (!res.ok) throw new Error(`Pull failed for ${image}: HTTP ${res.status}`);
   logger.info("deploy.pulled", { image });
 }
-
-// ── Public API ────────────────────────────────────────────────────────────────
 
 export async function deployServer(
   server: ServerRow,
@@ -130,12 +111,10 @@ export async function deployServer(
   try {
     logger.audit("deploy.start", { serverName: name, serverType: server.server_type });
 
-    // ── 1. Ensure data dirs exist ─────────────────────────────────────────────
     await emit("step.started", { step: "mkdirs", message: "Creating data directories…" });
     Bun.spawnSync(["mkdir", "-p", dataDir, bkDir]);
     await emit("step.completed", { step: "mkdirs", progressPct: 5, message: "Data directories ready" });
 
-    // ── 2. Pull images (sequential — parallel pulls thrash bandwidth) ─────────
     const images: Array<{ img: string; step: string; label: string; pct: number }> = [
       { img: "itzg/mc-router:latest",        step: "pull_router", label: "mc-router",        pct: 20 },
       { img: "itzg/minecraft-server:java25", step: "pull_game",   label: "minecraft-server", pct: 45 },
@@ -149,12 +128,10 @@ export async function deployServer(
       await emit("step.completed", { step, progressPct: pct, message: `Pulled ${label}` });
     }
 
-    // ── 3. Per-server bridge network ──────────────────────────────────────────
     await emit("step.started", { step: "create_network", message: `Creating network mc-${name}…` });
     await networkCreate(network);
     await emit("step.completed", { step: "create_network", progressPct: 65, message: "Network ready" });
 
-    // ── 4. Remove stale containers (idempotent) ───────────────────────────────
     await emit("step.started", { step: "remove_stale", message: "Removing stale containers…" });
     await Promise.all([
       containerRemove(name),
@@ -163,7 +140,6 @@ export async function deployServer(
     ]);
     await emit("step.completed", { step: "remove_stale", progressPct: 70, message: "Stale containers removed" });
 
-    // ── 5. mc-router (start immediately) ─────────────────────────────────────
     await emit("step.started", { step: "create_router", message: "Creating router container…" });
     const routerEnv: string[] = [
       "IN_DOCKER=true",
@@ -195,7 +171,6 @@ export async function deployServer(
     logger.info("deploy.router_started", { serverName: name });
     await emit("step.completed", { step: "start_router", progressPct: 83, message: "Router started" });
 
-    // ── 6. Game server (create only — mc-router starts it on first connection) ─
     await emit("step.started", { step: "create_game", message: "Creating game server container…" });
     const gameEnv: string[] = [
       "EULA=TRUE",
@@ -233,12 +208,10 @@ export async function deployServer(
     logger.info("deploy.game_created", { serverName: name });
     await emit("step.completed", { step: "create_game", progressPct: 90, message: "Game server container created" });
 
-    // Connect game to shared proxy network (optional — absent in local dev)
     await emit("step.started", { step: "connect_proxy", message: "Connecting to proxy network…" });
     await networkConnect(PROXY_NETWORK, name);
     await emit("step.completed", { step: "connect_proxy", progressPct: 93, message: "Connected to proxy network" });
 
-    // ── 7. Backup sidecar (start immediately) ─────────────────────────────────
     await emit("step.started", { step: "create_backup", message: "Creating backup sidecar…" });
     const backupEnv: string[] = [
       `RCON_HOST=${name}`,

@@ -1,33 +1,15 @@
-/**
- * FTB API client (api.modpacks.ch) with Redis caching.
- *
- * Endpoints used:
- *   GET /public/modpack/all              → { packs: number[] }  (all pack IDs, ~100)
- *   GET /public/modpack/{id}             → pack detail object
- *   GET /public/modpack/search/{n}?term= → { packs: number[], total: number }  (IDs only)
- *   GET /public/modpack/{id}/{versionId} → version manifest with mod/file list
- *
- * Redis keys:
- *   ftb:ids                 — all pack IDs array          (TTL 1h)
- *   ftb:pack:{id}           — individual pack detail      (TTL 1h)
- *   ftb:version:{versionId} — version manifest            (TTL 1h)
- *   ftb:search:{query}      — search result IDs array     (TTL 15min)
- */
-
 import { cacheGet, cacheSet } from "../cache/redis.js";
 import { logger } from "../lib/logger.js";
 
 const FTB_API = "https://api.modpacks.ch/public";
 
-const TTL_PACK   = 60 * 60;  // 1 hour
-const TTL_SEARCH = 15 * 60;  // 15 minutes
+const TTL_PACK   = 60 * 60;
+const TTL_SEARCH = 15 * 60;
 
 const KEY_ALL_IDS          = "ftb:ids";
 const packKey    = (id: number) => `ftb:pack:${id}`;
 const versionKey = (id: number) => `ftb:version:${id}`;
 const searchKey  = (q: string)  => `ftb:search:${q.toLowerCase().trim()}`;
-
-// ── HTTP helper ───────────────────────────────────────────────────────────────
 
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url, {
@@ -36,8 +18,6 @@ async function fetchJson<T>(url: string): Promise<T> {
   if (!res.ok) throw new Error(`FTB API ${res.status}: ${url}`);
   return res.json() as Promise<T>;
 }
-
-// ── All pack IDs ──────────────────────────────────────────────────────────────
 
 async function getAllPackIds(): Promise<number[]> {
   const cached = await cacheGet(KEY_ALL_IDS) as number[] | null;
@@ -51,8 +31,6 @@ async function getAllPackIds(): Promise<number[]> {
   return ids;
 }
 
-// ── Individual pack ───────────────────────────────────────────────────────────
-
 export async function getPack(packId: number): Promise<any> {
   const cached = await cacheGet(packKey(packId));
   if (cached) return cached;
@@ -64,14 +42,10 @@ export async function getPack(packId: number): Promise<any> {
   return data;
 }
 
-// ── Pack versions ─────────────────────────────────────────────────────────────
-
 export async function getPackVersions(packId: number): Promise<any[]> {
   const pack = await getPack(packId);
   return pack?.versions ?? [];
 }
-
-// ── Version detail (full manifest with mod/file list) ─────────────────────────
 
 export async function getPackVersion(packId: number, versionId: number): Promise<any | null> {
   const cached = await cacheGet(versionKey(versionId));
@@ -83,8 +57,6 @@ export async function getPackVersion(packId: number, versionId: number): Promise
   await cacheSet(versionKey(versionId), data, TTL_PACK);
   return data;
 }
-
-// ── Pack list (paginated, no filter) ─────────────────────────────────────────
 
 export async function getPackList(limit = 24, offset = 0): Promise<{
   packs: any[];
@@ -108,15 +80,6 @@ export async function getPackList(limit = 24, offset = 0): Promise<{
   };
 }
 
-// ── Search ────────────────────────────────────────────────────────────────────
-
-/**
- * Fetch ALL matching pack IDs for a query and cache by term.
- *
- * Uses n=1000 so we get every match in one shot — FTB's catalog is ~100 packs
- * total, so this is safe and avoids pagination gaps (e.g. "Skies 2" missing
- * because it wasn't in the top 24 results).
- */
 async function getSearchIds(query: string): Promise<number[]> {
   const key = searchKey(query);
   const cached = await cacheGet(key) as number[] | null;
@@ -151,6 +114,6 @@ export async function searchPacks(
 
   return {
     packs: results.filter(Boolean),
-    total: allIds.length, // authoritative count from the full cached ID list
+    total: allIds.length,
   };
 }

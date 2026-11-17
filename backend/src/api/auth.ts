@@ -8,7 +8,6 @@ const MS_TOKEN = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
 const MS_GRAPH_ME = "https://graph.microsoft.com/v1.0/me";
 const MS_SCOPE = "openid profile email User.Read";
 
-// OAuth state map (in-memory; fine for single-instance)
 const oauthStates = new Map<string, { provider: string; createdAt: number }>();
 const STATE_TTL_MS = 10 * 60 * 1000;
 
@@ -16,7 +15,6 @@ function generateState(): string {
   return crypto.randomUUID();
 }
 
-// Clean stale states
 setInterval(() => {
   const now = Date.now();
   for (const [k, v] of oauthStates) {
@@ -114,12 +112,9 @@ async function isEmailAllowed(email: string): Promise<boolean> {
   return rows.some(r => r.email === email);
 }
 
-// ── Routes ────────────────────────────────────────────────────────────────────
-
 export const authRoutes = new Elysia({ prefix: "/api/auth" })
   .use(jwtPlugin)
 
-  // POST /api/auth/dev-login — development only, creates/returns a local test user
   .post("/dev-login", async ({ jwt, set, body }) => {
     if (process.env.NODE_ENV === "production") {
       set.status = 404;
@@ -161,7 +156,6 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     body: t.Object({ username: t.Optional(t.String()) }),
   })
 
-  // GET /api/auth/providers — list configured/enabled providers
   .get("/providers", async () => {
     const rows = await db.selectFrom("auth_providers").selectAll().execute();
     return {
@@ -173,7 +167,6 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     };
   })
 
-  // GET /api/auth/login?provider=microsoft
   .get("/login", async ({ query, set }) => {
     const provider = query.provider;
     const row = await db.selectFrom("auth_providers").selectAll().where("provider", "=", provider).executeTakeFirst();
@@ -186,7 +179,6 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     return { redirect_uri: getOAuthUrl(row.client_id, row.redirect_uri, state) };
   }, { query: t.Object({ provider: t.Literal("microsoft") }) })
 
-  // GET /api/auth/callback?code=...&state=...
   .get("/callback", async ({ query, jwt, set }) => {
     const { code, state } = query;
     const stateData = oauthStates.get(state);
@@ -217,7 +209,6 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
 
     const username = await uniqueUsername(profile.username, profile.id);
 
-    // Upsert user
     const existingUser = await db.selectFrom("users").selectAll().where("provider", "=", provider).where("provider_id", "=", profile.id).executeTakeFirst();
 
     let userId: string;
@@ -228,7 +219,6 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
         .where("id", "=", userId)
         .execute();
     } else {
-      // Check if this is the first user — make them admin
       const userCount = await db.selectFrom("users").select(db.fn.count("id").as("count")).executeTakeFirst();
       const isFirst = Number(userCount?.count ?? 0) === 0;
       userId = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
@@ -258,13 +248,11 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     return { token, user: { id: user.id, email: user.email, username: user.username, avatarUrl: user.avatar_url, role: user.role } };
   }, { query: t.Object({ code: t.String(), state: t.String() }) })
 
-  // GET /api/auth/me
   .use(requireAuth)
   .get("/me", ({ currentUser }) => ({
     user: { id: currentUser.id, email: currentUser.email, username: currentUser.username, avatarUrl: currentUser.avatar_url, role: currentUser.role },
   }))
 
-  // POST /api/auth/logout — client drops token; server records nothing (stateless JWT)
   .post("/logout", ({ currentUser }) => {
     logger.audit("auth.logout", { userId: currentUser.id, username: currentUser.username });
     return { success: true };

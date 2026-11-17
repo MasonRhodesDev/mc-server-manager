@@ -39,7 +39,6 @@ export const useTaskStore = defineStore("tasks", () => {
     tasks.value.delete(taskId);
   }
 
-  /** Returns the first active task associated with a server, if any. */
   function forServer(serverId: string): ActiveTask | undefined {
     for (const task of tasks.value.values()) {
       if (task.serverId === serverId) return task;

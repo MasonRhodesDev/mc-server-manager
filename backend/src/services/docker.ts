@@ -1,8 +1,3 @@
-/**
- * Docker API client — talks to the Docker socket directly via HTTP over Unix socket.
- * Requires /var/run/docker.sock to be mounted (or set DOCKER_HOST env var).
- */
-
 import { logger } from "../lib/logger.js";
 
 const DOCKER_SOCKET = process.env.DOCKER_HOST ?? "unix:///var/run/docker.sock";
@@ -14,7 +9,7 @@ async function dockerFetch(path: string, init?: RequestInit): Promise<Response> 
 
   if (DOCKER_SOCKET.startsWith("unix://")) {
     const socketPath = DOCKER_SOCKET.replace("unix://", "");
-    // @ts-ignore — Bun-specific unix socket option
+    // @ts-ignore
     return fetch(url, { ...init, unix: socketPath });
   }
 
@@ -45,12 +40,10 @@ export interface ContainerInspect {
 export interface DockerResult {
   ok: boolean;
   error?: string;
-  notFound?: boolean;      // true when the container itself doesn't exist (Docker 404)
-  networkMissing?: boolean; // true when start failed because a referenced network is gone
-  missingNetwork?: string;  // name of the missing network, if known
+  notFound?: boolean;
+  networkMissing?: boolean;
+  missingNetwork?: string;
 }
-
-// ── Container operations ──────────────────────────────────────────────────────
 
 export async function inspectContainer(name: string): Promise<ContainerInspect | null> {
   try {
@@ -72,8 +65,6 @@ export async function startContainer(name: string): Promise<DockerResult> {
     logger.info("docker.start", { container: name });
     const res = await dockerFetch(`/containers/${name}/start`, { method: "POST" });
     if (res.status === 404) {
-      // Docker uses 404 for both "container not found" AND "referenced network not found".
-      // Parse the body to tell them apart.
       const body = await res.json().catch(() => ({} as any));
       const msg: string = body?.message ?? "";
       const netMatch = msg.match(/network (\S+) not found/);
@@ -85,7 +76,6 @@ export async function startContainer(name: string): Promise<DockerResult> {
       logger.warn("docker.container_not_found", { container: name, op: "start" });
       return { ok: false, notFound: true, error: `Container '${name}' not found — has it been deployed?` };
     }
-    // 204 = started, 304 = already running — both are fine
     if (res.status === 204 || res.status === 304) {
       logger.info("docker.started", { container: name });
       return { ok: true };
@@ -131,7 +121,6 @@ export async function disconnectNetwork(networkName: string, containerName: stri
       body: JSON.stringify({ Container: containerName, Force: true }),
     });
   } catch {
-    // best-effort; ignore errors
   }
 }
 
@@ -142,7 +131,6 @@ export async function containerLogs(name: string, lines = 100): Promise<string[]
     );
     if (!res.ok) return [];
     const text = await res.text();
-    // Docker multiplexed log stream has an 8-byte header per frame; strip it
     return text
       .split("\n")
       .filter(l => l.length > 8)

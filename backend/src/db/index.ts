@@ -7,20 +7,15 @@ import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// ── Database location ─────────────────────────────────────────────────────────
-// Prefer the env-var path (Docker volume); fall back to local dev path.
 const DB_PATH = process.env.DB_PATH ?? join(__dirname, "../../data/mc-manager.db");
 
-// Ensure parent directory exists
 const dbDir = DB_PATH.substring(0, DB_PATH.lastIndexOf("/"));
 if (dbDir) {
   await import("fs/promises").then(fs => fs.mkdir(dbDir, { recursive: true }));
 }
 
-// ── SQLite instance ───────────────────────────────────────────────────────────
 export const sqlite = new Database(DB_PATH);
 
-// Recreate auth_providers if it still has the old Discord/GitHub/Google CHECK.
 {
   const row: unknown = sqlite.query(
     "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'auth_providers'"
@@ -36,11 +31,9 @@ export const sqlite = new Database(DB_PATH);
   }
 }
 
-// Apply schema on startup
 const schema = readFileSync(join(__dirname, "schema.sql"), "utf8");
 sqlite.run(schema);
 
-// ── Kysely instance (typed query builder) ────────────────────────────────────
 import type {
   ServerRow,
   UserRow,

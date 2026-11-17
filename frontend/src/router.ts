@@ -69,7 +69,6 @@ const router = createRouter({
   ],
 });
 
-// Auth guard
 router.beforeEach(async (to) => {
   if (to.meta.public) return true;
   const auth = useAuthStore();

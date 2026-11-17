@@ -1,7 +1,6 @@
 <template>
   <div class="min-h-screen bg-coal-950 flex items-center justify-center p-6">
     <div class="w-full max-w-sm">
-      <!-- Logo -->
       <div class="text-center mb-8">
         <div class="w-16 h-16 bg-green-600/20 border border-green-600/40 rounded-2xl flex items-center justify-center mx-auto mb-4">
           <Server class="w-8 h-8 text-green-400" />
@@ -10,7 +9,6 @@
         <p class="text-coal-400 text-sm mt-1">Sign in to manage your servers</p>
       </div>
 
-      <!-- Provider buttons -->
       <div v-if="!loading" class="space-y-3">
         <div v-if="providers.filter(p => p.enabled).length === 0 && !isDev" class="card text-center">
           <p class="text-coal-400 text-sm">No auth providers configured.</p>
@@ -28,7 +26,6 @@
           <span>Continue with {{ providerNames[p.provider] }}</span>
         </button>
 
-        <!-- Dev-only login bypass -->
         <div v-if="isDev" class="pt-2 border-t border-coal-800 space-y-2">
           <p class="text-coal-500 text-xs text-center">Development mode</p>
           <button

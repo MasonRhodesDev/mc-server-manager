@@ -1,10 +1,3 @@
-/**
- * Thin EventSource wrapper for task progress SSE streams.
- *
- * EventSource cannot set custom headers, so auth is passed as ?token= query param.
- * The returned function closes the connection when called.
- */
-
 export interface TaskEventPayload {
   taskId: string;
   step?: string;
