@@ -1,9 +1,7 @@
-// ── Database row types (match schema.sql exactly) ────────────────────────────
-
 export interface ServerRow {
   id: string;
   name: string;
-  server_type: string;       // "FTBA" | "VANILLA" | "FORGE" | "PAPER"
+  server_type: string;
   modpack_id: number | null;
   modpack_version_id: number | null;
   memory_gb: number;
@@ -44,7 +42,7 @@ export interface AuthProviderRow {
   provider: "microsoft";
   client_id: string;
   client_secret: string;
-  enabled: number; // SQLite stores booleans as 0/1
+  enabled: number;
   redirect_uri: string;
 }
 
@@ -54,7 +52,7 @@ export interface AuthAllowlistRow {
 
 export interface FtbCacheRow {
   pack_id: number;
-  data: string; // JSON blob
+  data: string;
   fetched_at: string;
 }
 
@@ -84,11 +82,9 @@ export interface TaskEventRow {
   id: number;
   task_id: string;
   event_type: string;
-  payload: string; // JSON blob
+  payload: string;
   created_at: string;
 }
-
-// ── API response types ────────────────────────────────────────────────────────
 
 export interface User {
   id: string;

@@ -15,14 +15,12 @@ function generateRconPassword(): string {
 export const serverRoutes = new Elysia({ prefix: "/api/servers" })
   .use(requireAuth)
 
-  // GET /api/servers
   .get("/", async ({ currentUser }) => {
     logger.info("servers.list", { userId: currentUser.id });
     const servers = await db.selectFrom("servers").selectAll().orderBy("created_at", "asc").execute();
     return { servers };
   })
 
-  // POST /api/servers
   .post("/", async ({ body, set, currentUser }) => {
     const id = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
     const now = new Date().toISOString();
@@ -79,14 +77,12 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
     }),
   })
 
-  // GET /api/servers/:id
   .get("/:id", async ({ params, set }) => {
     const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!server) { set.status = 404; return { error: "Server not found" }; }
     return { server };
   })
 
-  // PUT /api/servers/:id
   .put("/:id", async ({ params, body, set, currentUser }) => {
     const existing = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!existing) { set.status = 404; return { error: "Server not found" }; }
@@ -120,13 +116,11 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
     }),
   })
 
-  // DELETE /api/servers/:id (admin only — removes DB record + tears down Docker resources)
   .use(requireAdmin)
   .delete("/:id", async ({ params, set, currentUser }) => {
     const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!server) { set.status = 404; return { error: "Server not found" }; }
 
-    // Block if a deploy is in flight — tearing down mid-deploy would leave things in a broken state
     const activeTask = await db.selectFrom("tasks").select("id")
       .where("server_id", "=", params.id)
       .where("kind", "=", "deploy")
@@ -137,7 +131,6 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
       return { error: "Deploy is in progress — wait for it to finish before deleting.", taskId: activeTask.id };
     }
 
-    // Tear down Docker resources; wrap so a Docker failure doesn't block the DB delete
     await undeployServer(server.name).catch(err =>
       logger.warn("server.delete_undeploy_failed", { serverId: params.id, error: String(err) })
     );
@@ -152,14 +145,10 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
     return { success: true };
   })
 
-  // ── Control endpoints ─────────────────────────────────────────────────────
-
-  // POST /api/servers/:id/control/deploy — create containers for the first time (or redeploy)
   .post("/:id/control/deploy", async ({ params, set, currentUser }) => {
     const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!server) { set.status = 404; return { error: "Server not found" }; }
 
-    // Reject if a deploy is already in flight
     const activeTask = await db
       .selectFrom("tasks")
       .select("id")
@@ -187,7 +176,6 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
 
     const { taskId, emit } = await createTask("deploy", server.id);
 
-    // Run in background — images can take several minutes to pull
     (async () => {
       await startTask(taskId);
       await emit("task.started", { message: "Pulling images and creating containers…" });
@@ -212,12 +200,10 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
     return { taskId, status: "queued", message: "Deploy started — subscribe to task events for progress." };
   })
 
-  // POST /api/servers/:id/control/start
   .post("/:id/control/start", async ({ params, set, currentUser }) => {
     const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!server) { set.status = 404; return { error: "Server not found" }; }
 
-    // Block start if a deploy task is in flight (replaces the dead server.state === "deploying" check)
     const activeDeployTask = await db
       .selectFrom("tasks")
       .select(["id"])
@@ -243,8 +229,6 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
       startContainer(`${server.name}-router`),
     ]);
 
-    // If start failed because a referenced network is missing (stale mc-proxy reference),
-    // disconnect the dead network and retry once.
     if (!gameResult.ok && gameResult.networkMissing && gameResult.missingNetwork) {
       logger.warn("servers.fixing_stale_network", {
         serverId: server.id,
@@ -256,8 +240,6 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
     }
 
     if (!gameResult.ok || !routerResult.ok) {
-      // One or both containers missing — DB is out of sync; snap back to 'created'
-      // so the UI shows Deploy instead of Start on next load.
       if (gameResult.notFound || routerResult.notFound) {
         await db.updateTable("servers")
           .set({ state: "created", updated_at: new Date().toISOString() })
@@ -283,7 +265,6 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
     return { status: "starting" };
   })
 
-  // POST /api/servers/:id/control/stop
   .post("/:id/control/stop", async ({ params, set, currentUser }) => {
     const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!server) { set.status = 404; return { error: "Server not found" }; }
@@ -297,7 +278,6 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
 
     const result = await stopContainer(server.name);
     if (!result.ok) {
-      // Container already gone — treat as stopped/undeployed and sync DB state
       if (result.notFound) {
         await db.updateTable("servers")
           .set({ state: "created", updated_at: new Date().toISOString() })
@@ -316,7 +296,6 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
     return { status: "stopped" };
   })
 
-  // GET /api/servers/:id/status
   .get("/:id/status", async ({ params, set }) => {
     const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!server) { set.status = 404; return { error: "Server not found" }; }
@@ -324,7 +303,6 @@ export const serverRoutes = new Elysia({ prefix: "/api/servers" })
     return { serverId: params.id, containers };
   })
 
-  // GET /api/servers/:id/logs?lines=100
   .get("/:id/logs", async ({ params, query, set }) => {
     const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!server) { set.status = 404; return { error: "Server not found" }; }

@@ -1,16 +1,4 @@
-/**
- * Task lifecycle service + in-memory pub/sub for SSE delivery.
- *
- * Every long-running operation (deploy, backup, restore) creates a task record,
- * emits named step events, and streams them to connected SSE clients.
- *
- * The DB is the source of truth — in-memory pub/sub is for live delivery only.
- * Missed events are replayed from task_events on reconnect via Last-Event-ID.
- */
-
 import { db } from "../db/index.js";
-
-// ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface TaskEventData {
   step?: string;
@@ -21,8 +9,6 @@ export interface TaskEventData {
 }
 
 export type TaskEmitter = (type: string, data: TaskEventData) => Promise<void>;
-
-// ── In-memory pub/sub ─────────────────────────────────────────────────────────
 
 const subscribers = new Map<string, Set<(raw: string) => void>>();
 
@@ -42,13 +28,9 @@ export function publishToTask(taskId: string, raw: string): void {
   subscribers.get(taskId)?.forEach(fn => fn(raw));
 }
 
-// ── SSE wire format ───────────────────────────────────────────────────────────
-
 export function formatSSEEvent(id: number, eventType: string, data: object): string {
   return `id: ${id}\nevent: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
 }
-
-// ── Task lifecycle ────────────────────────────────────────────────────────────
 
 export async function createTask(
   kind: 'deploy' | 'backup' | 'restore',
@@ -70,7 +52,6 @@ export async function createTask(
   }).execute();
 
   const emit: TaskEmitter = async (type: string, data: TaskEventData) => {
-    // 1. Persist to DB
     const result = await db.insertInto("task_events").values({
       task_id: taskId,
       event_type: type,
@@ -80,7 +61,6 @@ export async function createTask(
 
     const eventId = result?.id ?? 0;
 
-    // 2. Update task snapshot columns
     const updates: Record<string, unknown> = {};
     if (data.step !== undefined)        updates.current_step = data.step;
     if (data.progressPct !== undefined) updates.progress_pct = data.progressPct;
@@ -89,7 +69,6 @@ export async function createTask(
       await db.updateTable("tasks").set(updates as any).where("id", "=", taskId).execute();
     }
 
-    // 3. Push to live SSE subscribers
     const wire = formatSSEEvent(eventId, type, {
       taskId,
       ...data,
@@ -115,7 +94,6 @@ export async function completeTask(taskId: string, resultPayload?: unknown): Pro
     .where("id", "=", taskId)
     .execute();
 
-  // Emit terminal event to flush subscribers
   const result = await db.insertInto("task_events").values({
     task_id: taskId,
     event_type: "task.succeeded",

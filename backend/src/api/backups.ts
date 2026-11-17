@@ -8,7 +8,6 @@ import { createTask, startTask, completeTask, failTask } from "../services/tasks
 export const backupRoutes = new Elysia({ prefix: "/api/servers/:id/backups" })
   .use(requireAuth)
 
-  // GET /api/servers/:id/backups
   .get("/", async ({ params }) => {
     const backups = await db
       .selectFrom("backups")
@@ -19,7 +18,6 @@ export const backupRoutes = new Elysia({ prefix: "/api/servers/:id/backups" })
     return { backups };
   })
 
-  // POST /api/servers/:id/backups/create
   .post("/create", async ({ params, body, set, currentUser }) => {
     const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!server) { set.status = 404; return { error: "Server not found" }; }
@@ -43,7 +41,6 @@ export const backupRoutes = new Elysia({ prefix: "/api/servers/:id/backups" })
       await emit("task.started", { message: `Creating ${type} backup: ${label}` });
       try {
         const result = await runBackupWithTask(server.id, server.name, label, type, emit);
-        // Fetch the full backup record to include in the success payload
         const backup = await db
           .selectFrom("backups")
           .selectAll()
@@ -65,7 +62,6 @@ export const backupRoutes = new Elysia({ prefix: "/api/servers/:id/backups" })
     }),
   })
 
-  // POST /api/servers/:id/backups/:backupId/restore
   .post("/:backupId/restore", async ({ params, set, currentUser }) => {
     const server = await db.selectFrom("servers").selectAll().where("id", "=", params.id).executeTakeFirst();
     if (!server) { set.status = 404; return { error: "Server not found" }; }
@@ -101,7 +97,6 @@ export const backupRoutes = new Elysia({ prefix: "/api/servers/:id/backups" })
     return { taskId, status: "queued" };
   })
 
-  // DELETE /api/servers/:id/backups/:backupId
   .delete("/:backupId", async ({ params, set, currentUser }) => {
     const backup = await db.selectFrom("backups").selectAll().where("id", "=", params.backupId).executeTakeFirst();
     if (!backup) { set.status = 404; return { error: "Backup not found" }; }

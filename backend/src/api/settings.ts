@@ -5,7 +5,6 @@ import { requireAdmin } from "../middleware/auth.js";
 export const settingsRoutes = new Elysia({ prefix: "/api/settings" })
   .use(requireAdmin)
 
-  // GET /api/settings/auth
   .get("/auth", async () => {
     const providers = await db.selectFrom("auth_providers").selectAll().execute();
     const allowlist = await db.selectFrom("auth_allowlist").selectAll().execute();
@@ -13,7 +12,6 @@ export const settingsRoutes = new Elysia({ prefix: "/api/settings" })
       providers: providers.map(p => ({
         provider: p.provider,
         clientId: p.client_id,
-        // Never return the secret
         enabled: p.enabled === 1,
         redirectUri: p.redirect_uri,
         configured: p.client_id.length > 0 && p.client_secret.length > 0,
@@ -22,7 +20,6 @@ export const settingsRoutes = new Elysia({ prefix: "/api/settings" })
     };
   })
 
-  // POST /api/settings/auth/:provider
   .post("/auth/:provider", async ({ params, body }) => {
     const provider = params.provider;
     const patch: {
@@ -67,7 +64,6 @@ export const settingsRoutes = new Elysia({ prefix: "/api/settings" })
     }),
   })
 
-  // GET /api/settings/system
   .get("/system", () => ({
     settings: {
       dataPath: process.env.DATA_PATH ?? "/data",

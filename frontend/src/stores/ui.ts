@@ -11,7 +11,6 @@ export const useUIStore = defineStore("ui", () => {
   }
 
   function notify(type: "success" | "error" | "info", message: string, durationMs = 4000) {
-    // randomUUID is secure-context only (HTTPS or localhost). LAN HTTP on :5173 has no crypto.randomUUID.
     const id =
       typeof crypto.randomUUID === "function"
         ? crypto.randomUUID()

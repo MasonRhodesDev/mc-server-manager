@@ -7,14 +7,11 @@ dist/
 *.db-wal
 *.db-shm
 
-# Bun
 bun.lockb
 
-# Build artifacts
 backend/dist/
 frontend/dist/
 
-# Editor
 .vscode/
 .idea/
 *.swp

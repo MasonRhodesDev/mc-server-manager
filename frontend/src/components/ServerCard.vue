@@ -1,7 +1,6 @@
 <template>
   <RouterLink :to="`/servers/${server.id}`" class="card hover:border-coal-600 transition-colors block group">
     <div class="flex items-start justify-between gap-4">
-      <!-- Icon + name -->
       <div class="flex items-center gap-3 min-w-0">
         <div class="w-10 h-10 rounded-lg bg-coal-800 flex items-center justify-center shrink-0">
           <Layers v-if="server.serverType === 'FTBA'" class="w-5 h-5 text-orange-400" />
@@ -20,7 +19,6 @@
       <StatusBadge :status="server.state" />
     </div>
 
-    <!-- Stats row -->
     <div class="mt-4 flex items-center gap-4 text-xs text-coal-500">
       <span class="flex items-center gap-1">
         <Cpu class="w-3.5 h-3.5" />
@@ -36,7 +34,6 @@
       </span>
     </div>
 
-    <!-- Quick actions -->
     <div class="mt-4 flex items-center gap-2" @click.prevent>
       <button
         v-if="server.state !== 'running' && server.state !== 'starting'"

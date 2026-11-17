@@ -1,6 +1,5 @@
 <template>
   <div class="space-y-6">
-    <!-- Stats row -->
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
       <div class="card-sm">
         <p class="label">Total Servers</p>
@@ -20,7 +19,6 @@
       </div>
     </div>
 
-    <!-- Server grid -->
     <section>
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-sm font-semibold text-coal-200">All Servers</h2>
@@ -72,7 +70,7 @@ const ui = useUIStore();
 const totalServers  = computed(() => serversStore.servers.length);
 const runningServers = computed(() => serversStore.servers.filter(s => s.state === "running").length);
 const sleepingServers = computed(() => serversStore.servers.filter(s => s.state === "stopped" || s.state === "created").length);
-const totalBackups = computed(() => 0); // TODO: aggregate from backup store
+const totalBackups = computed(() => 0);
 
 onMounted(() => serversStore.fetchAll());
 

@@ -1,6 +1,5 @@
 <template>
   <div v-if="server" class="space-y-6">
-    <!-- Breadcrumb + header -->
     <div class="flex items-start justify-between gap-4">
       <div>
         <RouterLink to="/servers" class="btn-ghost text-xs px-0 text-coal-500">
@@ -14,15 +13,12 @@
         </div>
       </div>
 
-      <!-- Control buttons -->
       <div class="flex items-center gap-2 shrink-0">
-        <!-- Not yet deployed on this host -->
         <button v-if="liveStatus === 'not deployed'" @click="doDeploy" :disabled="acting || !!activeTask" class="btn-primary">
           <Loader2 v-if="acting || activeTask?.kind === 'deploy'" class="w-4 h-4 animate-spin" />
           <Rocket v-else class="w-4 h-4" />
           Deploy
         </button>
-        <!-- Deployed but stopped/created -->
         <template v-else-if="liveStatus !== 'running' && liveStatus !== 'starting'">
           <button @click="doStart" :disabled="acting || !!activeTask" class="btn-primary">
             <Play class="w-4 h-4" />
@@ -33,7 +29,6 @@
             <Rocket v-else class="w-3.5 h-3.5" />
           </button>
         </template>
-        <!-- Running -->
         <button v-else @click="doStop" :disabled="acting" class="btn-secondary">
           <Square class="w-4 h-4 text-red-400" />
           Stop
@@ -45,10 +40,8 @@
       </div>
     </div>
 
-    <!-- Task progress bar (deploy / backup / restore) -->
     <TaskProgress :task="activeTask" />
 
-    <!-- Info cards -->
     <div class="grid sm:grid-cols-3 gap-4">
       <div class="card-sm">
         <p class="label">Memory</p>
@@ -67,7 +60,6 @@
       </div>
     </div>
 
-    <!-- Log viewer -->
     <div class="card">
       <div class="flex items-center justify-between mb-3">
         <h3 class="text-sm font-semibold text-coal-200">Logs</h3>
@@ -82,7 +74,6 @@
       </div>
     </div>
 
-    <!-- Backups -->
     <div class="card">
       <div class="flex items-center justify-between mb-3">
         <h3 class="text-sm font-semibold text-coal-200">Backups</h3>
@@ -155,10 +146,8 @@ const logsLoading   = ref(false);
 const serverBackups = ref<any[]>([]);
 const acting        = ref(false);
 
-// Active task for this server (reactive computed from store)
 const activeTask = computed(() => server.value ? taskStore.forServer(server.value.id) : undefined);
 
-// Track SSE disconnect functions so we can clean up on unmount
 const disconnects = ref<Array<() => void>>([]);
 
 onMounted(async () => {
@@ -175,7 +164,6 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  // Close any open SSE streams when navigating away
   disconnects.value.forEach(d => d());
   disconnects.value = [];
 });
@@ -190,8 +178,6 @@ async function fetchLogs() {
     logsLoading.value = false;
   }
 }
-
-// ── Deploy ─────────────────────────────────────────────────────────────────────
 
 async function doDeploy() {
   acting.value = true;
@@ -211,8 +197,6 @@ async function doDeploy() {
     acting.value = false;
   }
 }
-
-// ── Start / Stop ───────────────────────────────────────────────────────────────
 
 async function doStart() {
   acting.value = true;
@@ -240,8 +224,6 @@ async function doStop() {
   }
 }
 
-// ── Backup ─────────────────────────────────────────────────────────────────────
-
 async function doBackup() {
   try {
     const { taskId } = await backupsApi.create(server.value.id, "Manual backup");
@@ -256,8 +238,6 @@ async function doBackup() {
     ui.notify("error", "Backup failed");
   }
 }
-
-// ── Restore ────────────────────────────────────────────────────────────────────
 
 async function doRestore(backupId: string) {
   if (!confirm("This will replace all server data. Continue?")) return;
@@ -275,16 +255,12 @@ async function doRestore(backupId: string) {
   }
 }
 
-// ── Delete backup ──────────────────────────────────────────────────────────────
-
 async function doDeleteBackup(backupId: string) {
   if (!confirm("Delete this backup?")) return;
   await backupsApi.delete(server.value.id, backupId);
   serverBackups.value = serverBackups.value.filter((b: any) => b.id !== backupId);
   ui.notify("info", "Backup deleted");
 }
-
-// ── SSE helper ─────────────────────────────────────────────────────────────────
 
 interface SubscribeOptions {
   onDeployDone?:  () => void;
@@ -318,8 +294,6 @@ function subscribeTask(taskId: string, opts: SubscribeOptions) {
   });
   disconnects.value.push(disconnect);
 }
-
-// ── Formatters ─────────────────────────────────────────────────────────────────
 
 function formatDate(iso: string) {
   return format(new Date(iso), "MMM d, HH:mm");

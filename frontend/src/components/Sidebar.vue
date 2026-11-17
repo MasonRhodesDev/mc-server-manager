@@ -3,7 +3,6 @@
     class="flex flex-col h-full bg-coal-900 border-r border-coal-800 transition-all duration-200 shrink-0"
     :class="ui.sidebarCollapsed ? 'w-[60px]' : 'w-[240px]'"
   >
-    <!-- Logo / brand -->
     <div class="flex items-center gap-3 h-14 px-3 border-b border-coal-800">
       <div class="w-8 h-8 bg-green-600/20 border border-green-600/40 rounded-lg flex items-center justify-center shrink-0">
         <Server class="w-4 h-4 text-green-400" />
@@ -15,14 +14,11 @@
       </Transition>
     </div>
 
-    <!-- Nav links -->
     <nav class="flex-1 py-3 px-2 space-y-0.5 overflow-y-auto">
       <SidebarLink v-for="link in navLinks" :key="link.to" v-bind="link" />
     </nav>
 
-    <!-- User / collapse -->
     <div class="border-t border-coal-800 p-2 space-y-1">
-      <!-- Collapse toggle -->
       <button
         @click="ui.toggleSidebar()"
         class="btn-ghost w-full justify-center"
@@ -35,7 +31,6 @@
         </Transition>
       </button>
 
-      <!-- User avatar -->
       <div v-if="auth.user" class="flex items-center gap-3 px-2 py-1.5 rounded-lg">
         <img
           v-if="auth.user.avatarUrl"

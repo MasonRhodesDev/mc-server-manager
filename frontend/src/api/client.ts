@@ -6,10 +6,6 @@ export const api = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
-// ── snake_case → camelCase transform ─────────────────────────────────────────
-// All backend responses use snake_case (raw DB rows). Every component and store
-// expects camelCase. Transform once here so neither layer has to care.
-
 function snakeToCamel(str: string): string {
   return str.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
 }
@@ -27,14 +23,12 @@ function transformKeys(value: unknown): unknown {
   return value;
 }
 
-// Attach auth token from localStorage to every request
 api.interceptors.request.use(config => {
   const token = localStorage.getItem("mc_token");
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
-// Transform response keys + global error handling
 api.interceptors.response.use(
   res => {
     res.data = transformKeys(res.data);

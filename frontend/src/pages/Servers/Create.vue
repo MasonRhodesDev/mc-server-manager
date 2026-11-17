@@ -113,7 +113,6 @@ const router = useRouter();
 const route = useRoute();
 const ui = useUIStore();
 
-// Pre-fill from FTB Explorer query params (?packId=103&packName=FTB+Skies)
 const packId = route.query.packId ? Number(route.query.packId) : null;
 const packName = route.query.packName ? String(route.query.packName) : "";
 const packVersionId = route.query.versionId ? Number(route.query.versionId) : null;

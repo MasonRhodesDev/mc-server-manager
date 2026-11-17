@@ -1,6 +1,5 @@
 import { api } from "./client.js";
 
-// ── Auth ──────────────────────────────────────────────────────────────────────
 export const auth = {
   providers: () => api.get("/auth/providers").then(r => r.data),
   login: (provider: string) => api.get(`/auth/login?provider=${provider}`).then(r => r.data),
@@ -9,7 +8,6 @@ export const auth = {
   devLogin: (username = "devuser") => api.post("/auth/dev-login", { username }).then(r => r.data),
 };
 
-// ── Servers ───────────────────────────────────────────────────────────────────
 export const servers = {
   list: () => api.get("/servers").then(r => r.data),
   get: (id: string) => api.get(`/servers/${id}`).then(r => r.data),
@@ -24,7 +22,6 @@ export const servers = {
   logs: (id: string, lines = 100) => api.get(`/servers/${id}/logs?lines=${lines}`).then(r => r.data),
 };
 
-// ── Backups ───────────────────────────────────────────────────────────────────
 export const backups = {
   list: (serverId: string) => api.get(`/servers/${serverId}/backups`).then(r => r.data),
   create: (serverId: string, label?: string) => api.post(`/servers/${serverId}/backups/create`, { manual: true, label }).then(r => r.data),
@@ -32,7 +29,6 @@ export const backups = {
   delete: (serverId: string, backupId: string) => api.delete(`/servers/${serverId}/backups/${backupId}`).then(r => r.data),
 };
 
-// ── FTB ───────────────────────────────────────────────────────────────────────
 export const ftb = {
   packs: (params?: { search?: string; limit?: number; offset?: number }) =>
     api.get("/ftb/packs", { params }).then(r => r.data),
@@ -42,12 +38,10 @@ export const ftb = {
     api.get(`/ftb/packs/${packId}/versions/${versionId}`).then(r => r.data),
 };
 
-// ── Tasks ─────────────────────────────────────────────────────────────────────
 export const tasks = {
   get: (taskId: string) => api.get(`/tasks/${taskId}`).then(r => r.data),
 };
 
-// ── Settings ──────────────────────────────────────────────────────────────────
 export const settings = {
   getAuth: () => api.get("/settings/auth").then(r => r.data),
   setAuthProvider: (provider: string, data: Record<string, unknown>) =>

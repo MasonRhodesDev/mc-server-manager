@@ -1,14 +1,10 @@
 <template>
   <div class="flex h-screen overflow-hidden bg-coal-950">
-    <!-- Sidebar -->
     <Sidebar />
 
-    <!-- Main content area -->
     <div class="flex flex-col flex-1 min-w-0 overflow-hidden">
-      <!-- Pinned header -->
       <Header />
 
-      <!-- Page content -->
       <main class="flex-1 overflow-y-auto p-6">
         <RouterView />
       </main>

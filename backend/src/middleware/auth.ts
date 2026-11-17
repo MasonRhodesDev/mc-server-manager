@@ -15,7 +15,6 @@ export type JWTPayload = {
   role: "admin" | "operator" | "viewer";
 };
 
-// Middleware plugin: requires valid JWT, injects user into context
 export const requireAuth = new Elysia({ name: "require-auth" })
   .use(jwtPlugin)
   .derive({ as: "scoped" }, async ({ jwt, headers, set }) => {
@@ -46,7 +45,6 @@ export const requireAuth = new Elysia({ name: "require-auth" })
     return { currentUser: user };
   });
 
-// Admin-only guard
 export const requireAdmin = new Elysia({ name: "require-admin" })
   .use(requireAuth)
   .derive({ as: "scoped" }, ({ currentUser, set }) => {
@@ -57,7 +55,6 @@ export const requireAdmin = new Elysia({ name: "require-admin" })
     return {};
   });
 
-// SSE auth — reads token from ?token= query param because EventSource can't set headers
 export const requireAuthSSE = new Elysia({ name: "require-auth-sse" })
   .use(jwtPlugin)
   .derive({ as: "scoped" }, async ({ jwt, query, set }) => {

@@ -1,15 +1,3 @@
-/**
- * Structured JSON logger.
- * Every log line is a JSON object — easy to grep, pipe to jq, or ingest into a log aggregator.
- *
- * Levels:
- *   debug  — verbose dev noise
- *   info   — normal operational events (HTTP requests, Docker calls)
- *   warn   — unexpected but non-fatal (Docker container not found, etc.)
- *   error  — something failed that shouldn't have
- *   audit  — user-initiated actions that change state (create/delete/start/stop/backup/restore/login)
- */
-
 export type LogLevel = "debug" | "info" | "warn" | "error" | "audit";
 
 export interface LogContext {
@@ -36,9 +24,5 @@ export const logger = {
   warn:  (msg: string, ctx?: LogContext) => write("warn",  msg, ctx),
   error: (msg: string, ctx?: LogContext) => write("error", msg, ctx),
 
-  /**
-   * Audit log — user-initiated state-changing actions.
-   * Always include: action, userId, username (when available).
-   */
   audit: (action: string, ctx?: LogContext) => write("audit", action, ctx),
 };

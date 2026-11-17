@@ -1,20 +1,9 @@
-/**
- * Task API
- *
- * GET /api/tasks/:taskId          — current task snapshot (Bearer token auth)
- * GET /api/tasks/:taskId/events   — SSE stream (?token= query param auth)
- *
- * Two separate Elysia instances so each can use the appropriate auth plugin.
- */
-
 import Elysia, { t } from "elysia";
 import { db } from "../db/index.js";
 import { requireAuth, requireAuthSSE } from "../middleware/auth.js";
 import { subscribeToTask, formatSSEEvent } from "../services/tasks.js";
 
 const TERMINAL_EVENTS = new Set(["task.succeeded", "task.failed", "task.cancelled"]);
-
-// ── GET /api/tasks/:taskId ────────────────────────────────────────────────────
 
 export const taskSnapshotRoutes = new Elysia({ prefix: "/api/tasks" })
   .use(requireAuth)
@@ -28,8 +17,6 @@ export const taskSnapshotRoutes = new Elysia({ prefix: "/api/tasks" })
     if (!task) { set.status = 404; return { error: "Task not found" }; }
     return { task };
   });
-
-// ── GET /api/tasks/:taskId/events ─────────────────────────────────────────────
 
 export const taskStreamRoutes = new Elysia({ prefix: "/api/tasks" })
   .use(requireAuthSSE)
@@ -47,7 +34,6 @@ export const taskStreamRoutes = new Elysia({ prefix: "/api/tasks" })
       });
     }
 
-    // Last-Event-ID: prefer header, fall back to query param for initial connect
     const lastEventIdHeader = request.headers.get("last-event-id");
     const lastEventId = Number(
       lastEventIdHeader ?? (query as Record<string, string | undefined>).lastEventId ?? "0"
@@ -60,10 +46,9 @@ export const taskStreamRoutes = new Elysia({ prefix: "/api/tasks" })
     const stream = new ReadableStream({
       async start(controller) {
         const enqueue = (raw: string) => {
-          try { controller.enqueue(enc.encode(raw)); } catch { /* closed */ }
+          try { controller.enqueue(enc.encode(raw)); } catch { }
         };
 
-        // ── Replay missed events ─────────────────────────────────────────────
         const missed = await db
           .selectFrom("task_events")
           .selectAll()
@@ -74,7 +59,7 @@ export const taskStreamRoutes = new Elysia({ prefix: "/api/tasks" })
 
         for (const evt of missed) {
           let parsed: object = {};
-          try { parsed = JSON.parse(evt.payload); } catch { /* empty payload */ }
+          try { parsed = JSON.parse(evt.payload); } catch { }
           enqueue(formatSSEEvent(evt.id, evt.event_type, {
             taskId,
             ...parsed,
@@ -82,7 +67,6 @@ export const taskStreamRoutes = new Elysia({ prefix: "/api/tasks" })
           }));
         }
 
-        // ── Close immediately if task is already terminal ────────────────────
         const lastReplayed = missed.at(-1);
         const taskAlreadyDone = (
           task.status === "succeeded" ||
@@ -96,7 +80,6 @@ export const taskStreamRoutes = new Elysia({ prefix: "/api/tasks" })
           return;
         }
 
-        // ── Live subscription ────────────────────────────────────────────────
         let closed = false;
 
         const unsub = subscribeToTask(taskId, (raw: string) => {
@@ -109,13 +92,11 @@ export const taskStreamRoutes = new Elysia({ prefix: "/api/tasks" })
           }
         });
 
-        // ── Heartbeat ────────────────────────────────────────────────────────
         const heartbeat = setInterval(() => {
           if (closed) { clearInterval(heartbeat); return; }
           enqueue(": heartbeat\n\n");
         }, 15_000);
 
-        // ── Cleanup (called when client disconnects / reader released) ───────
         return () => {
           closed = true;
           clearInterval(heartbeat);
@@ -138,8 +119,6 @@ export const taskStreamRoutes = new Elysia({ prefix: "/api/tasks" })
       lastEventId: t.Optional(t.String()),
     }),
   });
-
-// ── Helper ────────────────────────────────────────────────────────────────────
 
 function extractEventType(raw: string): string {
   const match = raw.match(/^event: (.+)$/m);

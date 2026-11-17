@@ -1,11 +1,3 @@
-## Production deployment
-## All environment specific values come from a local .env (see .env.example).
-## Copy to the Docker host: scp -r . "$DEPLOY_USER@$DEPLOY_HOST:$CONFIG_DIR/"
-## Run on the host: cp .env.example .env && edit .env, then
-##   docker compose -f docker-compose.prod.yml up -d
-## DATA_PATH and BACKUPS_PATH are mounted at the same path inside the container
-## because the manager hands them to the Docker daemon as host bind sources.
-
 services:
   mc-server-manager:
     image: mc-server-manager:latest
@@ -14,14 +6,14 @@ services:
       context: .
       dockerfile: docker/Dockerfile
     ports:
-      - "127.0.0.1:3010:3000"          # Behind your reverse proxy
+      - "127.0.0.1:3010:3000"
     environment:
       PORT: "3000"
       DB_PATH: /config/mc-manager.db
       DATA_PATH: "${DATA_PATH:?set DATA_PATH in .env}"
       BACKUPS_PATH: "${BACKUPS_PATH:?set BACKUPS_PATH in .env}"
       JWT_SECRET: "${JWT_SECRET:?set JWT_SECRET in .env}"
-      FRONTEND_URL: "${FRONTEND_URL:?set FRONTEND_URL in .env}"   # e.g. https://mcm.example.com
+      FRONTEND_URL: "${FRONTEND_URL:?set FRONTEND_URL in .env}"
     volumes:
       - ${CONFIG_DIR:?set CONFIG_DIR in .env}:/config
       - ${DATA_PATH}:${DATA_PATH}:ro
@@ -29,7 +21,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: unless-stopped
     networks:
-      - mc-proxy                        # Access Velocity and game containers
+      - mc-proxy
 
 networks:
   mc-proxy:
